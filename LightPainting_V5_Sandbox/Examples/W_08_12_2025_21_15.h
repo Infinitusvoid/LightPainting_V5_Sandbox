@@ -1,47 +1,27 @@
+#pragma once
+
 #include "WireUtil.h"
+#include <cmath>
 
 using namespace WireEngine;
 
 // -----------------------------------------------------------------------------
-// Shared tunnel constants (camera + drawing both use these)
-// -----------------------------------------------------------------------------
-constexpr int   TUNNEL_SEGMENTS = 6;      // hexagon
-constexpr float TUNNEL_RADIUS = 40.0f;  // ring radius
-constexpr float TUNNEL_SPACING = 25.0f;  // distance between rings
-
-// How many rings to draw around the camera (on each side)
-constexpr int   TUNNEL_RINGS_HALF = 10;
-
-// Center used only for orbit debug
-constexpr float TUNNEL_Z_CENTER = 0.0f;
-
-constexpr bool CAMERA_INSIDE = true; // true = inside, false = orbit
-
-// -----------------------------------------------------------------------------
-// Scene parameters – shared between camera + lines via user_ptr
-// -----------------------------------------------------------------------------
-struct SceneParams
-{
-    float cam_z = 0.0f;  // camera position along tunnel "z"
-    float move_speed = 40.0f; // units per second in z-space
-};
-
-// -----------------------------------------------------------------------------
-// Minimal render settings for fast, crisp debug
+// Render settings – fast but nice enough
 // -----------------------------------------------------------------------------
 RenderSettings init_render_settings(const std::string& baseName,
     int seconds = 4)
 {
     RenderSettings s{};
 
-    // Lower res for quick iteration
+    // Resolution
     s.width = 1280;
     s.height = 720;
 
+    // Time
     s.frames = 60 * seconds;
     s.fps = 60.0f;
 
-    // Single pass, no temporal accumulation
+    // Single pass for quick iteration
     s.accum_passes = 1;
 
     // Additive neon
@@ -63,7 +43,7 @@ RenderSettings init_render_settings(const std::string& baseName,
 
     // Readback & IO
     s.use_pbo = true;
-    s.output_dir = "frames_tunnel_debug";
+    s.output_dir = "frames_tunnel_universe";
 
     // Output: unique video name
     s.output_mode = OutputMode::FFmpegVideo;
@@ -75,114 +55,20 @@ RenderSettings init_render_settings(const std::string& baseName,
 }
 
 // -----------------------------------------------------------------------------
-// Shared curve: center of the tunnel as a function of z + time
+// Tiny helper – one line with defaults
 // -----------------------------------------------------------------------------
-glm::vec3 tunnel_center(float z, float t)
-{
-    // Same bending logic as before, just factored out
-    float bendPhase = z * 0.03f + t * 0.6f;
-
-    float offsetX = std::sin(bendPhase) * 30.0f;  // left/right
-    float offsetY = std::cos(bendPhase * 0.8f) * 10.0f;  // up/down
-
-    return glm::vec3(offsetX, offsetY, z);
-}
-
-// -----------------------------------------------------------------------------
-// Camera: inside mode follows the tunnel curve; orbit mode orbits around it
-// -----------------------------------------------------------------------------
-void camera_callback(int frame, float t, CameraParams& cam)
-{
-    (void)frame;
-    const float twoPi = 6.2831853f;
-
-    auto* scene = static_cast<SceneParams*>(cam.user_ptr);
-
-    if (CAMERA_INSIDE)
-    {
-        if (!scene) return;
-
-        // Move along z over time
-        scene->cam_z = -50.0f + t * scene->move_speed;
-        float zCam = scene->cam_z;
-
-        // Camera position on the curve
-        glm::vec3 eyePos = tunnel_center(zCam, t);
-
-        // Look ahead along the same curve
-        float lookAheadDist = 60.0f;
-        glm::vec3 aheadPos = tunnel_center(zCam + lookAheadDist, t);
-
-        glm::vec3 forward = glm::normalize(aheadPos - eyePos);
-
-        // Stable camera frame
-        glm::vec3 worldUp(0.0f, 1.0f, 0.0f);
-        glm::vec3 right = glm::normalize(glm::cross(forward, worldUp));
-        if (glm::length(right) < 1e-3f)
-            right = glm::vec3(1.0f, 0.0f, 0.0f);
-        glm::vec3 up = glm::normalize(glm::cross(right, forward));
-
-        cam.eye_x = eyePos.x;
-        cam.eye_y = eyePos.y;
-        cam.eye_z = eyePos.z;
-
-        glm::vec3 target = eyePos + forward * 80.0f;
-
-        cam.target_x = target.x;
-        cam.target_y = target.y;
-        cam.target_z = target.z;
-
-        cam.up_x = up.x;
-        cam.up_y = up.y;
-        cam.up_z = up.z;
-
-        cam.has_custom_fov = true;
-        cam.fov_y_deg = 75.0f;  // "speed" feeling
-    }
-    else
-    {
-        // ---- ORBIT mode (for debugging the shape in 3D) ----
-        float orbitRadius = 220.0f;
-        float orbitHeight = 40.0f;
-        float orbitSpeed = 0.12f;
-
-        float angle = t * orbitSpeed * twoPi;
-
-        cam.eye_x = std::cos(angle) * orbitRadius;
-        cam.eye_y = orbitHeight;
-        cam.eye_z = std::sin(angle) * orbitRadius + TUNNEL_Z_CENTER;
-
-        cam.target_x = 0.0f;
-        cam.target_y = 0.0f;
-        cam.target_z = TUNNEL_Z_CENTER;
-
-        cam.up_x = 0.0f;
-        cam.up_y = 1.0f;
-        cam.up_z = 0.0f;
-
-        cam.has_custom_fov = true;
-        cam.fov_y_deg = 60.0f;
-
-        // Keep the tunnel centered around this z for the orbit mode
-        if (scene)
-            scene->cam_z = TUNNEL_Z_CENTER;
-    }
-}
-
-// -----------------------------------------------------------------------------
-// Debug helper: one line with default look
-// -----------------------------------------------------------------------------
-void line(LineEmitContext& ctx,
-    const glm::vec3& v0,
-    const glm::vec3& v1,
-    const glm::vec3& color = glm::vec3(1.3f, 0.4f, 1.3f),
-    float            thickness = 0.35f,
-    float            intensity = 120.0f)
+inline void emit_line(LineEmitContext& ctx,
+    const Vec3& a,
+    const Vec3& b,
+    const Vec3& color,
+    float thickness,
+    float intensity,
+    float jitter = 0.0f)
 {
     LineParams lp{};
 
-    lp.start_x = v0.x; lp.start_y = v0.y; lp.start_z = v0.z;
-    lp.end_x = v1.x; lp.end_y = v1.y; lp.end_z = v1.z;
+    lp.start_x = a.x; lp.start_y = a.y; lp.start_z = a.z;
+    lp.end_x = b.x; lp.end_y = b.y; lp.end_z = b.z;
 
     lp.start_r = color.x;
     lp.start_g = color.y;
@@ -192,90 +78,334 @@ void line(LineEmitContext& ctx,
     lp.end_b = color.z;
 
     lp.thickness = thickness;
-    lp.jitter = 0.0f;     // no animation / flicker in debug
+    lp.jitter = jitter;
     lp.intensity = intensity;
 
     ctx.add(lp);
 }
 
 // -----------------------------------------------------------------------------
-// Build a bent hex-tunnel around a given camZ (sliding window)
+// Camera rig – parameters for inside/orbit camera
 // -----------------------------------------------------------------------------
-void draw_debug_tunnel(LineEmitContext& ctx, float t, float camZ)
+struct CameraRig
 {
-    const float twoPi = 6.2831853f;
-    const float angleOffset = twoPi * 0.5f / TUNNEL_SEGMENTS; // flat top/bottom
+    bool  inside_mode = true;  // true = fly inside, false = orbit outside
 
-    // Integer index of the "segment" the camera is in
-    float   segmentF = camZ / TUNNEL_SPACING;
-    int     baseIndex = static_cast<int>(std::floor(segmentF));
-    float   baseZ = baseIndex * TUNNEL_SPACING;
+    // Inside mode
+    float fly_speed = 40.0f; // units per second along the tunnel
+    float fov_inside = 75.0f;
 
-    auto ring_vertex = [&](int ringOffset, int segIdx) -> glm::vec3
-        {
-            // ringOffset = -TUNNEL_RINGS_HALF..+TUNNEL_RINGS_HALF
-            float z = baseZ + ringOffset * TUNNEL_SPACING;
+    // Orbit mode
+    float orbit_radius = 260.0f;
+    float orbit_height = 60.0f;
+    float orbit_speed = 0.10f;  // revs per second-ish
+    float fov_orbit = 60.0f;
+};
 
-            // Center of this ring follows the same curve as the camera
-            glm::vec3 center = tunnel_center(z, t);
+// -----------------------------------------------------------------------------
+// TunnelSection – all the math describing the tunnel shape
+// -----------------------------------------------------------------------------
+struct TunnelSection
+{
+    int   segments = 6;   // hexagon
+    int   rings = 24;  // how many frames deep
 
-            // Slight radius breathing so the tunnel feels alive
-            float radius = TUNNEL_RADIUS *
-                (1.0f + 0.12f * std::sin(z * 0.05f + t * 0.9f));
+    float radius = 40.0f; // base ring radius
+    float spacing = 25.0f; // distance between ring centers along "s"
 
-            // Local hex vertex around this bent center
-            float a = twoPi * (float)segIdx / (float)TUNNEL_SEGMENTS + angleOffset;
-            float x = std::cos(a) * radius;
-            float y = std::sin(a) * radius;
+    // Bending parameters
+    float bend_freq_z = 0.03f;
+    float bend_freq_time = 0.6f;
+    float bend_amp_x = 30.0f;
+    float bend_amp_y = 10.0f;
 
-            return center + glm::vec3(x, y, 0.0f);
-        };
+    // Radius breathing
+    float radius_breath_amp = 0.12f;
+    float radius_breath_freq_z = 0.05f;
+    float radius_breath_freq_time = 0.9f;
 
-    // Colors similar to your reference: blue frames, magenta connectors
-    glm::vec3 frameColor = glm::vec3(0.25f, 0.55f, 1.6f) * 2.0f;
-    glm::vec3 barColor = glm::vec3(1.6f, 0.4f, 1.6f) * 2.0f;
-
-    // Visible rings: a sliding window centered around camZ
-    const int R_MIN = -TUNNEL_RINGS_HALF;
-    const int R_MAX = +TUNNEL_RINGS_HALF;
-
-    // 1) Draw all hex frames
-    for (int r = R_MIN; r <= R_MAX; ++r)
+    // For convenience
+    float total_length() const
     {
-        for (int s = 0; s < TUNNEL_SEGMENTS; ++s)
-        {
-            int sNext = (s + 1) % TUNNEL_SEGMENTS;
-            glm::vec3 a = ring_vertex(r, s);
-            glm::vec3 b = ring_vertex(r, sNext);
-
-            line(ctx, a, b, frameColor, 0.32f, 110.0f);
-        }
+        return (rings > 1) ? (float)(rings - 1) * spacing : 0.0f;
     }
 
-    // 2) Connect frames with longitudinal bars
-    for (int r = R_MIN; r < R_MAX; ++r)
+    // Center of the tunnel at a given "baseZ" (distance along the tunnel axis)
+    Vec3 center_at_baseZ(float baseZ, float t) const
     {
-        for (int s = 0; s < TUNNEL_SEGMENTS; ++s)
-        {
-            glm::vec3 a = ring_vertex(r, s);
-            glm::vec3 b = ring_vertex(r + 1, s);
+        float bendPhase = baseZ * bend_freq_z + t * bend_freq_time;
 
-            line(ctx, a, b, barColor, 0.36f, 130.0f);
+        float offsetX = std::sin(bendPhase) * bend_amp_x;
+        float offsetY = std::cos(bendPhase * 0.8f) * bend_amp_y;
+
+        return make_vec3(offsetX, offsetY, baseZ);
+    }
+
+    // Center of a specific ring index
+    Vec3 center_for_ring(int ringIdx, float t) const
+    {
+        if (ringIdx < 0) ringIdx = 0;
+        if (ringIdx > rings - 1) ringIdx = rings - 1;
+
+        float baseZ = (float)ringIdx * spacing;
+        return center_at_baseZ(baseZ, t);
+    }
+
+    float radius_at_baseZ(float baseZ, float t) const
+    {
+        float arg = baseZ * radius_breath_freq_z + t * radius_breath_freq_time;
+        return radius * (1.0f + radius_breath_amp * std::sin(arg));
+    }
+
+    float radius_for_ring(int ringIdx, float t) const
+    {
+        if (ringIdx < 0) ringIdx = 0;
+        if (ringIdx > rings - 1) ringIdx = rings - 1;
+
+        float baseZ = (float)ringIdx * spacing;
+        return radius_at_baseZ(baseZ, t);
+    }
+
+    // Vertex of a ring (hex) at ringIdx/segIdx
+    Vec3 ring_vertex(int ringIdx, int segIdx, float t) const
+    {
+        const float twoPi = 6.2831853f;
+
+        Vec3 center = center_for_ring(ringIdx, t);
+        float R = radius_for_ring(ringIdx, t);
+
+        float angleOffset = twoPi * 0.5f / (float)segments; // flat top/bottom
+        float a = twoPi * (float)segIdx / (float)segments + angleOffset;
+
+        float x = std::cos(a) * R;
+        float y = std::sin(a) * R;
+
+        return make_vec3(center.x + x, center.y + y, center.z);
+    }
+
+    // Continuous center along the tunnel, for camera
+    Vec3 center_along(float s, float t) const
+    {
+        if (rings <= 1 || spacing <= 0.0f)
+            return center_for_ring(0, t);
+
+        if (s <= 0.0f)
+            return center_for_ring(0, t);
+
+        float maxS = total_length();
+        if (s >= maxS)
+            return center_for_ring(rings - 1, t);
+
+        float ringf = s / spacing; // e.g. 3.2 means between ring 3 and 4
+        int i0 = (int)ringf;
+        if (i0 < 0) i0 = 0;
+        if (i0 > rings - 2) i0 = rings - 2;
+        int i1 = i0 + 1;
+
+        float alpha = ringf - (float)i0; // [0,1] between i0 and i1
+
+        Vec3 c0 = center_for_ring(i0, t);
+        Vec3 c1 = center_for_ring(i1, t);
+
+        return c0 * (1.0f - alpha) + c1 * alpha;
+    }
+};
+
+// -----------------------------------------------------------------------------
+// Tunnel – draws the geometry
+// -----------------------------------------------------------------------------
+struct Tunnel
+{
+    TunnelSection section{};
+
+    // Colors inspired by your reference
+    Vec3 frameColor = make_vec3(0.25f, 0.55f, 1.6f) * 2.0f;   // ring frames
+    Vec3 barColor = make_vec3(1.6f, 0.4f, 1.6f) * 2.0f;     // longitudinal bars
+    Vec3 coreColor = make_vec3(1.4f, 1.2f, 1.8f) * 2.0f;     // central core
+
+    bool draw_core = true;
+
+    void draw(LineEmitContext& ctx, float t) const
+    {
+        const int   rings = section.rings;
+        const int   segments = section.segments;
+        const float twoPi = 6.2831853f;
+
+        if (rings < 2 || segments < 3)
+            return;
+
+        // 1) Draw all ring frames
+        for (int r = 0; r < rings; ++r)
+        {
+            for (int s = 0; s < segments; ++s)
+            {
+                int sn = (s + 1) % segments;
+
+                Vec3 a = section.ring_vertex(r, s, t);
+                Vec3 b = section.ring_vertex(r, sn, t);
+
+                // Mild fading along the length
+                float pathFrac = (rings > 1) ? (float)r / (float)(rings - 1) : 0.0f;
+                float fade = 0.4f + 0.6f * (1.0f - pathFrac);
+
+                emit_line(ctx,
+                    a, b,
+                    frameColor * fade,
+                    0.32f,
+                    110.0f);
+            }
         }
+
+        // 2) Longitudinal bars between rings
+        for (int r = 0; r < rings - 1; ++r)
+        {
+            float pathFrac = (rings > 1) ? (float)r / (float)(rings - 1) : 0.0f;
+            float fade = 0.5f + 0.5f * (1.0f - pathFrac);
+
+            for (int s = 0; s < segments; ++s)
+            {
+                Vec3 a = section.ring_vertex(r, s, t);
+                Vec3 b = section.ring_vertex(r + 1, s, t);
+
+                emit_line(ctx,
+                    a, b,
+                    barColor * fade,
+                    0.36f,
+                    130.0f);
+            }
+        }
+
+        // 3) Optional bright core line along tunnel center
+        if (draw_core)
+        {
+            for (int r = 0; r < rings - 1; ++r)
+            {
+                float baseZ0 = (float)r * section.spacing;
+                float baseZ1 = (float)(r + 1) * section.spacing;
+
+                Vec3 c0 = section.center_at_baseZ(baseZ0, t);
+                Vec3 c1 = section.center_at_baseZ(baseZ1, t);
+
+                float pathFrac = (rings > 1) ? (float)r / (float)(rings - 1) : 0.0f;
+                float pulse = 0.7f + 0.3f * std::sin(twoPi * pathFrac + t * 1.3f);
+
+                emit_line(ctx,
+                    c0, c1,
+                    coreColor * pulse,
+                    0.45f,
+                    180.0f);
+            }
+        }
+    }
+};
+
+// -----------------------------------------------------------------------------
+// Universe – your scene container
+// -----------------------------------------------------------------------------
+struct Universe
+{
+    CameraRig camera{};
+    Tunnel    tunnel{};
+};
+
+// -----------------------------------------------------------------------------
+// Camera callback – reads Universe and positions camera
+// -----------------------------------------------------------------------------
+void camera_callback(int frame, float t, CameraParams& cam)
+{
+    (void)frame;
+    const float twoPi = 6.2831853f;
+
+    auto* uni = static_cast<Universe*>(cam.user_ptr);
+
+    // Fallback: no universe -> simple static camera
+    if (!uni)
+    {
+        cam.eye_x = 0.0f; cam.eye_y = 0.0f; cam.eye_z = -200.0f;
+        cam.target_x = 0.0f; cam.target_y = 0.0f; cam.target_z = 0.0f;
+        cam.up_x = 0.0f; cam.up_y = 1.0f; cam.up_z = 0.0f;
+        cam.has_custom_fov = true;
+        cam.fov_y_deg = 60.0f;
+        return;
+    }
+
+    CameraRig& cr = uni->camera;
+    TunnelSection& sec = uni->tunnel.section;
+
+    if (cr.inside_mode)
+    {
+        // --- Camera flies INSIDE the tunnel along its centerline ---
+        float totalLen = sec.total_length();
+        if (totalLen <= 0.0f) totalLen = 1.0f;
+
+        // Distance along the tunnel
+        float sCam = std::fmod(t * cr.fly_speed, totalLen);
+        if (sCam < 0.0f) sCam += totalLen;
+
+        float lookAheadDist = 40.0f;
+        float sAhead = sCam + lookAheadDist;
+        if (sAhead > totalLen) sAhead = totalLen;
+
+        Vec3 eye = sec.center_along(sCam, t);
+        Vec3 target = sec.center_along(sAhead, t);
+
+        Vec3 forward = target - eye;
+        float fLen = length3(forward);
+        if (fLen < 1e-4f) forward = make_vec3(0.0f, 0.0f, 1.0f);
+        else              forward = forward * (1.0f / fLen);
+
+        Vec3 worldUp = make_vec3(0.0f, 1.0f, 0.0f);
+        Vec3 right = cross3(forward, worldUp);
+        float rLen = length3(right);
+        if (rLen < 1e-4f) right = make_vec3(1.0f, 0.0f, 0.0f);
+        else              right = right * (1.0f / rLen);
+        Vec3 up = normalize3(cross3(right, forward));
+
+        cam.eye_x = eye.x;    cam.eye_y = eye.y;    cam.eye_z = eye.z;
+        cam.target_x = target.x; cam.target_y = target.y; cam.target_z = target.z;
+        cam.up_x = up.x;     cam.up_y = up.y;     cam.up_z = up.z;
+
+        cam.has_custom_fov = true;
+        cam.fov_y_deg = cr.fov_inside;
+    }
+    else
+    {
+        // --- External orbit around approximate tunnel center ---
+        float centerS = sec.total_length() * 0.5f;
+        Vec3  center = sec.center_along(centerS, t);
+
+        float angle = t * cr.orbit_speed * twoPi;
+
+        float ox = std::cos(angle) * cr.orbit_radius;
+        float oz = std::sin(angle) * cr.orbit_radius;
+
+        Vec3 eye = make_vec3(center.x + ox,
+            center.y + cr.orbit_height,
+            center.z + oz);
+
+        Vec3 target = center;
+        Vec3 up = make_vec3(0.0f, 1.0f, 0.0f);
+
+        cam.eye_x = eye.x;    cam.eye_y = eye.y;    cam.eye_z = eye.z;
+        cam.target_x = target.x; cam.target_y = target.y; cam.target_z = target.z;
+        cam.up_x = up.x;     cam.up_y = up.y;     cam.up_z = up.z;
+
+        cam.has_custom_fov = true;
+        cam.fov_y_deg = cr.fov_orbit;
     }
 }
 
 // -----------------------------------------------------------------------------
-// Line callback – draw the infinite-ish tunnel around the camera
+// Line callback – draws the tunnel from Universe
 // -----------------------------------------------------------------------------
 void line_push_callback(int frame, float t, LineEmitContext& ctx)
 {
     (void)frame;
 
-    auto* scene = static_cast<SceneParams*>(ctx.user_ptr);
-    float camZ = scene ? scene->cam_z : 0.0f;
+    auto* uni = static_cast<Universe*>(ctx.user_ptr);
+    if (!uni) return;
 
-    draw_debug_tunnel(ctx, t, camZ);
+    uni->tunnel.draw(ctx, t);
     ctx.flush_now();
 }
 
@@ -284,7 +414,7 @@ void line_push_callback(int frame, float t, LineEmitContext& ctx)
 // -----------------------------------------------------------------------------
 int main()
 {
-    std::cout << "example_tunnel_infinite_follow_curve\n";
+    std::cout << "example_tunnel_universe\n";
     std::cout << "This code is in file: " << __FILE__ << "\n";
 
     const std::string uniqueName = WIRE_UNIQUE_NAME(g_base_output_filepath);
@@ -292,14 +422,17 @@ int main()
     std::cout << "Output path: " << g_base_output_filepath
         << "/" << uniqueName << ".mp4\n";
 
-    SceneParams   scene{};
     RenderSettings settings = init_render_settings(uniqueName, 4);
+
+    Universe universe{};
+    // tweak a bit if you want:
+    // universe.camera.inside_mode = false; // try orbit mode
 
     renderSequencePush(
         settings,
         camera_callback,
         line_push_callback,
-        &scene    // shared SceneParams for camera + lines
+        &universe // passed as user_ptr to both callbacks
     );
 
     VLC::play(g_base_output_filepath + "/" + uniqueName + ".mp4");

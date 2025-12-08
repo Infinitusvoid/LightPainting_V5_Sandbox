@@ -150,6 +150,7 @@
     <ClInclude Include="Examples\W_08_12_2025_20_51.h" />
     <ClInclude Include="Examples\W_08_12_2025_21_03.h" />
     <ClInclude Include="Examples\W_08_12_2025_21_10.h" />
+    <ClInclude Include="Examples\W_08_12_2025_21_15.h" />
     <ClInclude Include="example_start.h" />
     <ClInclude Include="WireEngine_v5.h" />
     <ClInclude Include="WireUtil.h" />
