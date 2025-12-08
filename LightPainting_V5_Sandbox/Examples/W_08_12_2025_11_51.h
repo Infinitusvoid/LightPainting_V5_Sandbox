@@ -2,16 +2,49 @@
 
 #include "WireEngine_v5.h"
 
+// -----------------------------------------------------------------------------
+// Standard library
+// -----------------------------------------------------------------------------
 #include <cmath>
-#include <iostream>
-#include <string>
 #include <cstdlib>
-#include <random>
 #include <ctime>
 #include <filesystem>
+#include <iostream>
+#include <random>
 #include <sstream>
+#include <string>
+#include <vector>
+#include <array>
 
+// -----------------------------------------------------------------------------
+// Third-party / single-header style libs we want available in examples
+// -----------------------------------------------------------------------------
+
+
+
+// Math / geometry (primary: we actually use this in the example)
+#include "../External_libs/glm_0_9_9_7/glm/glm/glm.hpp"
+#include "../External_libs/glm_0_9_9_7/glm/glm/gtc/matrix_transform.hpp"
+#include "../External_libs/glm_0_9_9_7/glm/glm/gtc/type_ptr.hpp"
+
+// JSON – for future scene description / camera paths / presets
+#include "../External_libs/nlohmann/json.h"
+
+// stb utilities – for future examples (image export, noise, etc.)
+#include "../External_libs/stb/image/stb_image_write.h"
+#include "../External_libs/stb/image/stb_image.h"
+#include "../External_libs/stb/perlin/stb_perlin.h"
+
+// Optional “your” helpers (uncomment when the headers exist in the repo)
+// #include "../External_libs/My/Easing/Easing.h"      // easing curves
+// #include "../External_libs/My/Color/ColorUtils.h"  // color palettes, HSV helpers
+
+// VLC wrapper you already use
 #include "../External_libs/My/VLC/VLC.h"
+
+using namespace WireEngine;
+namespace fs = std::filesystem;
+using json = nlohmann::json;
 
 // Where all videos are written (used by generate_unique_name)
 const std::string g_base_output_filepath = "C:/Users/Cosmos/Desktop/output/tmp";
@@ -47,8 +80,6 @@ namespace Utils
 {
     inline std::string generate_unique_name()
     {
-        namespace fs = std::filesystem;
-
         // 1) Base name from this source file path (__FILE__)
         std::string fullPath = __FILE__;
         std::string filename = fullPath;
@@ -101,72 +132,37 @@ namespace Utils
     }
 }
 
-using namespace WireEngine;
-
 // -----------------------------------------------------------------------------
-// Simple Vec3 helper for math (avoids bringing in glm here)
+// Vec3 helpers using GLM
 // -----------------------------------------------------------------------------
-struct Vec3
-{
-    float x, y, z;
-};
+using Vec3 = glm::vec3;
 
 inline Vec3 make_vec3(float x, float y, float z)
 {
-    return Vec3{ x, y, z };
-}
-
-inline Vec3 operator+(const Vec3& a, const Vec3& b)
-{
-    return { a.x + b.x, a.y + b.y, a.z + b.z };
-}
-
-inline Vec3 operator-(const Vec3& a, const Vec3& b)
-{
-    return { a.x - b.x, a.y - b.y, a.z - b.z };
-}
-
-inline Vec3 operator*(const Vec3& a, float s)
-{
-    return { a.x * s, a.y * s, a.z * s };
-}
-
-inline Vec3 operator*(float s, const Vec3& a)
-{
-    return a * s;
-}
-
-inline Vec3 operator/(const Vec3& a, float s)
-{
-    return { a.x / s, a.y / s, a.z / s };
+    return Vec3(x, y, z);
 }
 
 inline float dot3(const Vec3& a, const Vec3& b)
 {
-    return a.x * b.x + a.y * b.y + a.z * b.z;
+    return glm::dot(a, b);
 }
 
 inline Vec3 cross3(const Vec3& a, const Vec3& b)
 {
-    return {
-        a.y * b.z - a.z * b.y,
-        a.z * b.x - a.x * b.z,
-        a.x * b.y - a.y * b.x
-    };
+    return glm::cross(a, b);
 }
 
 inline float length3(const Vec3& v)
 {
-    return std::sqrt(dot3(v, v));
+    return glm::length(v);
 }
 
 inline Vec3 normalize3(const Vec3& v)
 {
-    float len = length3(v);
-    if (len <= 1e-6f) return { 0.0f, 0.0f, 0.0f };
+    float len = glm::length(v);
+    if (len <= 1e-6f) return Vec3(0.0f);
     return v / len;
 }
-
 
 // -----------------------------------------------------------------------------
 // Render settings  uses unique video name
@@ -222,9 +218,9 @@ RenderSettings init_render_settings(const std::string& baseName,
 // -----------------------------------------------------------------------------
 struct SceneParams
 {
-    int bands = 48;            // how many colorful ribbons (coarse)
-    int segmentsPerBand = 32;  // detail per ribbon (coarse)
-    int sparkleCount = 1500;   // small flickering halo lines
+    int bands = 48;  // how many colorful ribbons (coarse)
+    int segmentsPerBand = 32; // detail per ribbon (coarse)
+    int sparkleCount = 1500; // small flickering halo lines
 
     // Camera base values
     float camera_base_radius = 220.0f;
@@ -244,14 +240,13 @@ struct SceneParams
     // Generic phase you can reuse in multiple places
     float shared_phase = 0.0f;
 
-    // NEW: camera basis & position (computed in camera_callback)
+    // Camera basis & position (computed in camera_callback)
     Vec3 cam_eye{ 0.0f, 0.0f, 450.0f };
     Vec3 cam_target{ 0.0f, 0.0f,   0.0f };
     Vec3 cam_forward{ 0.0f, 0.0f,  -1.0f };
     Vec3 cam_right{ 1.0f, 0.0f,   0.0f };
     Vec3 cam_up_vec{ 0.0f, 1.0f,   0.0f };
 };
-
 
 // -----------------------------------------------------------------------------
 // Camera callback  orbit + breathing driven via SceneParams
@@ -296,10 +291,10 @@ void camera_callback(int frame, float t, CameraParams& cam)
     cam.has_custom_fov = true;
     cam.fov_y_deg = scene->camera_base_fov + scene->camera_fov_offset;
 
-    // --- NEW: write camera basis into SceneParams for the push callback ---
-
+    // --- write camera basis into SceneParams for the push callback ---
     scene->cam_eye = make_vec3(cam.eye_x, cam.eye_y, cam.eye_z);
     scene->cam_target = make_vec3(cam.target_x, cam.target_y, cam.target_z);
+
     Vec3 worldUp = make_vec3(cam.up_x, cam.up_y, cam.up_z);
 
     Vec3 forward = normalize3(scene->cam_target - scene->cam_eye); // camera look direction
@@ -314,7 +309,6 @@ void camera_callback(int frame, float t, CameraParams& cam)
     scene->cam_right = right;
     scene->cam_up_vec = up;
 }
-
 
 // -----------------------------------------------------------------------------
 // Push-style line callback  **this is the main show**
@@ -342,8 +336,8 @@ void line_push_callback(int frame, float t, LineEmitContext& ctx)
     const int baseMajor = (scene->bands > 0) ? scene->bands : 1;
     const int baseTube = (scene->segmentsPerBand > 0) ? scene->segmentsPerBand : 1;
 
-    const int majorSegs = baseMajor * 16;    // 48 * 16 = 768
-    const int tubeSegs = baseTube * 20;    // 32 * 20 = 640
+    const int majorSegs = baseMajor * 16;  // 48 * 16 = 768
+    const int tubeSegs = baseTube * 20;   // 32 * 20 = 640
     const int haloCount = scene->sparkleCount;
 
     auto hueToRGB = [&](float h) -> Vec3
@@ -365,9 +359,9 @@ void line_push_callback(int frame, float t, LineEmitContext& ctx)
         const int   linesEach = static_cast<int>(halfSize / step);
 
         // Subtle bluish grid, but brighter & thicker than before.
-        Vec3 baseGridCol = { 0.55f, 0.62f, 0.78f };
+        Vec3  baseGridCol = { 0.55f, 0.62f, 0.78f };
         float gridIntensity = 130.0f * 32.0f;
-        float gridThickness = 0.012f;      // MUCH thicker -> less aliasing  less flicker
+        float gridThickness = 0.012f;      // MUCH thicker -> less aliasing / less flicker
 
         for (int i = -linesEach; i <= linesEach; ++i)
         {
@@ -392,7 +386,7 @@ void line_push_callback(int frame, float t, LineEmitContext& ctx)
                 lp.end_b = lp.start_b;
 
                 lp.thickness = gridThickness;
-                lp.jitter = 0.0f;         // no jitter  no temporal shimmer
+                lp.jitter = 0.0f;         // no jitter / no temporal shimmer
                 lp.intensity = gridIntensity;
 
                 ctx.add(lp);
@@ -470,7 +464,7 @@ void line_push_callback(int frame, float t, LineEmitContext& ctx)
             lp.end_y = floorY + 260.0f;
             lp.end_z = 0.0f;
 
-            Vec3 axisCol = hueToRGB(0.58f); // soft cyan
+            Vec3  axisCol = hueToRGB(0.58f); // soft cyan
             float bright = 1.6f;
 
             lp.start_r = bright * axisCol.x;
@@ -488,7 +482,7 @@ void line_push_callback(int frame, float t, LineEmitContext& ctx)
         }
     }
 
-    ctx.flush_now(); // semantic boundary: "floor/axis layer done"
+    ctx.flush_now(); // "floor/axis layer done"
 
     // =========================================================================
     // 1) Two nested tori: longitudinal + meridional segments (continuous)
@@ -513,32 +507,30 @@ void line_push_callback(int frame, float t, LineEmitContext& ctx)
         // Outer torus: big, proud, slightly thicker, bright.
         {
             0.0f,
-            100.0f, 26.0f,       // majorR, minorR
-            0.045f, 0.22f,       // majorWaveAmp, minorWaveAmp
-            0.00f,               // hueOffset
-            0.010f, 0.004f,      // thickness base / var
-            110.0f, 55.0f,       // slightly toned down vs before
-            0.14f, 0.08f,        // jitter base / var
-            3.6f                 // brightnessScale
+            100.0f, 26.0f,
+            0.045f, 0.22f,
+            0.00f,
+            0.010f, 0.004f,
+            110.0f, 55.0f,
+            0.14f, 0.08f,
+            3.6f
         },
         // Inner torus: slightly smaller and more intricate.
         {
             1.0f,
-            70.0f,  18.0f,       // majorR, minorR
-            0.065f, 0.28f,       // majorWaveAmp, minorWaveAmp
-            0.30f,               // hueOffset
-            0.007f, 0.003f,      // thickness base / var
-            85.0f,  38.0f,       // intensity base / var
-            0.12f, 0.06f,        // jitter base / var
-            3.0f                 // brightnessScale
+            70.0f,  18.0f,
+            0.065f, 0.28f,
+            0.30f,
+            0.007f, 0.003f,
+            85.0f,  38.0f,
+            0.12f, 0.06f,
+            3.0f
         }
     };
 
-    // Time scales for waves  gently modulated by camera breathing / shared phase
     float tSlow = t * (0.25f + 0.25f * breathNorm);
     float tWave = t * 0.7f + phase * 0.45f;
 
-    // Smooth torus position with gentle standing waves
     auto torus_pos = [&](const TorusLayer& L, float u, float v) -> Vec3
         {
             float cu = std::cos(u);
@@ -582,24 +574,20 @@ void line_push_callback(int frame, float t, LineEmitContext& ctx)
                 float v1 = twoPi * (float)(iv + 1) / (float)tubeSegs;
                 float vFrac = (float)iv / (float)tubeSegs;
 
-                // Smooth, always-positive brightness; no hard "top vs bottom".
                 float stripeU = 0.5f + 0.5f * std::sin(5.0f * u0 + 0.8f * tWave + L.id * 0.7f);
                 float stripeV = 0.7f + 0.3f * std::sin(2.0f * v0 - 0.6f * tSlow + L.id * 1.3f);
 
-                float brightnessBase = 0.40f + 0.45f * stripeU; // [~0.4, ~0.85]
-                float brightnessV = 0.65f + 0.35f * stripeV; // [~0.65, ~1.0]
+                float brightnessBase = 0.40f + 0.45f * stripeU;
+                float brightnessV = 0.65f + 0.35f * stripeV;
                 float brightness = brightnessBase * brightnessV;
                 brightness *= L.brightnessScale * (0.75f + 0.25f * breathNorm);
 
-                // Color varies mainly with u (around donut), plus slight v modulation
                 float hue = uFrac + L.hueOffset
                     + 0.05f * std::sin(2.0f * v0 + t * 0.6f)
                     + 0.08f * (breathNorm - 0.5f);
                 Vec3 col = hueToRGB(hue);
 
-                // -----------------------------
-                // A) Longitudinal segment (around major ring, u direction)
-                // -----------------------------
+                // A) Longitudinal segment
                 {
                     Vec3 p0 = torus_pos(L, u0, v0);
                     Vec3 p1 = torus_pos(L, u1, v0);
@@ -627,9 +615,7 @@ void line_push_callback(int frame, float t, LineEmitContext& ctx)
                     ctx.add(lp);
                 }
 
-                // -----------------------------
-                // B) Meridional segment (around tube, v direction)
-                // -----------------------------
+                // B) Meridional segment
                 {
                     Vec3 p0 = torus_pos(L, u0, v0);
                     Vec3 p1 = torus_pos(L, u0, v1);
@@ -670,10 +656,10 @@ void line_push_callback(int frame, float t, LineEmitContext& ctx)
         }
     }
 
-    ctx.flush_now(); // semantic boundary: "torus layer done"
+    ctx.flush_now(); // "torus layer done"
 
     // =========================================================================
-    // 2) Halo: radial lines emanating from the outer torus, softly pulsing.
+    // 2) Halo
     // =========================================================================
     const TorusLayer& haloLayer = layers[0];
 
@@ -688,7 +674,7 @@ void line_push_callback(int frame, float t, LineEmitContext& ctx)
         if (len2 <= 1e-4f) continue;
 
         float invLen = 1.0f / std::sqrt(len2);
-        Vec3 dir{ p.x * invLen, p.y * invLen, p.z * invLen };
+        Vec3  dir{ p.x * invLen, p.y * invLen, p.z * invLen };
 
         float stretch = 1.10f + 0.25f * Random::random_01();
 
@@ -723,21 +709,16 @@ void line_push_callback(int frame, float t, LineEmitContext& ctx)
 
     ctx.flush_now(); // "halo layer done"
 
-
     // =========================================================================
-// 3) Billboard sculpture in the center that always faces the camera.
-//    Now calmer, crisp, low-jitter pattern.
-// =========================================================================
+    // 3) Billboard sculpture in the center that always faces the camera.
+    // =========================================================================
     {
-        Vec3 center = make_vec3(0.0f, 0.0f, 0.0f);
-        center.y += 25;
+        Vec3 center = make_vec3(0.0f, 25.0f, 0.0f);
 
-        // From center to camera (so the plane faces the camera)
         Vec3 toCam = scene->cam_eye - center;
         if (length3(toCam) < 1e-5f) toCam = make_vec3(0.0f, 0.0f, 1.0f);
         Vec3 forward = normalize3(toCam);
 
-        // Use scene->cam_up_vec for a stable vertical, derive right & up
         Vec3 right = normalize3(cross3(scene->cam_up_vec, forward));
         if (length3(right) < 1e-5f) right = make_vec3(1.0f, 0.0f, 0.0f);
         Vec3 up = normalize3(cross3(forward, right));
@@ -756,7 +737,7 @@ void line_push_callback(int frame, float t, LineEmitContext& ctx)
         Vec3 pBL = center - rightScaled - upScaled;
 
         float billboardHue = 0.12f + 0.05f * std::sin(t * 0.8f + phase);
-        Vec3 edgeCol = hueToRGB(billboardHue);
+        Vec3  edgeCol = hueToRGB(billboardHue);
         float brightBill = 2.2f * (0.6f + 0.4f * pulse) * (0.7f + 0.3f * breathNorm);
 
         auto add_edge = [&](const Vec3& a, const Vec3& b)
@@ -772,7 +753,6 @@ void line_push_callback(int frame, float t, LineEmitContext& ctx)
                 lp.end_g = lp.start_g;
                 lp.end_b = lp.start_b;
 
-                // Edges: crisp, no jitter
                 lp.thickness = 0.011f * 6.0f;
                 lp.jitter = 0.0f;
                 lp.intensity = 120.0f * 2.0f;
@@ -786,9 +766,7 @@ void line_push_callback(int frame, float t, LineEmitContext& ctx)
         add_edge(pBR, pBL);
         add_edge(pBL, pTL);
 
-        // ---------------------------------------------------------------------
-        // Scanlines: subtle horizontal lines inside the rectangle.
-        // ---------------------------------------------------------------------
+        // Scanlines
         {
             int scanLines = 32;
             for (int i = 0; i < scanLines; ++i)
@@ -801,12 +779,9 @@ void line_push_callback(int frame, float t, LineEmitContext& ctx)
                 Vec3 b = center + rightScaled + rowOffset;
 
                 float lineHue = billboardHue + 0.015f * (vFrac - 0.5f);
-                Vec3 lineCol = hueToRGB(lineHue);
+                Vec3  lineCol = hueToRGB(lineHue);
 
-                // Slow, gentle modulation to avoid strobing
                 float lineBright = brightBill * (0.5f + 0.4f * std::sin(t * 0.9f + vFrac * twoPi));
-
-
 
                 LineParams lp{};
                 lp.start_x = a.x; lp.start_y = a.y; lp.start_z = a.z;
@@ -820,25 +795,19 @@ void line_push_callback(int frame, float t, LineEmitContext& ctx)
                 lp.end_b = lp.start_b * 0.8f;
 
                 lp.thickness = 0.006f;
-                lp.jitter = 0.0f;       // keep these razor-clean
+                lp.jitter = 0.0f;
                 lp.intensity = 100.0f;
 
                 ctx.add(lp);
             }
         }
 
-        // ---------------------------------------------------------------------
-        // Animated Lissajous-style figure on the billboard plane, but calmer:
-        //  - fewer segments
-        //  - lower intensity
-        //  - almost no jitter
-        // ---------------------------------------------------------------------
+        // Lissajous figure on the billboard
         {
             int   curveSegs = 260;
-            float aFreq = 2.0f;   // lower frequencies = smoother motion
+            float aFreq = 2.0f;
             float bFreq = 3.0f;
 
-            // Slowly evolving phases  continuous, not strobey
             float phaseA = 0.7f * phase + 0.3f * t;
             float phaseB = 0.4f * phase + 0.9f * t;
 
@@ -852,7 +821,6 @@ void line_push_callback(int frame, float t, LineEmitContext& ctx)
                 float u1 = std::sin(aFreq * twoPi * s1 + phaseA);
                 float v1 = std::sin(bFreq * twoPi * s1 + phaseB);
 
-                // Scale into inner area of the billboard
                 float radX = 0.80f;
                 float radY = 0.55f;
                 u0 *= radX; v0 *= radY;
@@ -862,9 +830,8 @@ void line_push_callback(int frame, float t, LineEmitContext& ctx)
                 Vec3 P1 = center + rightScaled * u1 + upScaled * v1;
 
                 float hueCurve = billboardHue + 0.16f * (s0 - 0.5f);
-                Vec3 curveCol = hueToRGB(hueCurve);
+                Vec3  curveCol = hueToRGB(hueCurve);
 
-                // Gentle glow modulation along the curve
                 float glow = 0.9f + 0.6f * std::sin(twoPi * s0 + t * 0.6f + phase * 0.5f);
 
                 LineParams lp{};
@@ -878,7 +845,6 @@ void line_push_callback(int frame, float t, LineEmitContext& ctx)
                 lp.end_g = lp.start_g * 0.9f;
                 lp.end_b = lp.start_b * 0.9f;
 
-                // KEY: almost no jitter, moderate intensity  much less flicker
                 lp.thickness = 0.010f;
                 lp.jitter = 0.002f;
                 lp.intensity = 95.0f * 10.0f;
@@ -887,11 +853,7 @@ void line_push_callback(int frame, float t, LineEmitContext& ctx)
             }
         }
     }
-
 }
-
-
-
 
 // -----------------------------------------------------------------------------
 // Entry
@@ -901,20 +863,19 @@ int main()
     std::cout << "example_lissajous_push\n";
     std::cout << "This code is in file: " << __FILE__ << "\n";
 
-    // Unique name based on file + first free version
     const std::string uniqueName = Utils::generate_unique_name();
     std::cout << "Video name: " << uniqueName << "\n";
     std::cout << "Output path: " << g_base_output_filepath
         << "/" << uniqueName << ".mp4\n";
 
-    SceneParams scene{};
+    SceneParams   scene{};
     RenderSettings settings = init_render_settings(uniqueName, 4);
 
     renderSequencePush(
         settings,
-        camera_callback,      // orbit camera (writes into SceneParams)
-        line_push_callback,   // analytic ribbons + sparkles (reads SceneParams)
-        &scene                // shared state for both camera + lines
+        camera_callback,
+        line_push_callback,
+        &scene
     );
 
     VLC::play(g_base_output_filepath + "/" + uniqueName + ".mp4");
