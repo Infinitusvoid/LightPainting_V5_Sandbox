@@ -29,7 +29,7 @@ RenderSettings init_render_settings(const std::string& baseName,
     s.line_blend_mode = LineBlendMode::AdditiveLightPainting;
 
     // Simple tone; bloom OFF for clean debug
-    s.exposure = 1.5f;
+    s.exposure = 1.5f * 10.0f;
     s.bloom_enabled = false;
     s.bloom_threshold = 10.0f;
     s.bloom_strength = 0.0f;
