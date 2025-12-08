@@ -4,9 +4,9 @@
 
 using namespace WireEngine;
 
-// -----------------------------------------------------------------------------
-// Render settings – fast but nice enough
-// -----------------------------------------------------------------------------
+// ============================================================================
+//  Render settings – fast but nice enough
+// ============================================================================
 RenderSettings init_render_settings(const std::string& baseName,
     int seconds = 4)
 {
@@ -42,7 +42,7 @@ RenderSettings init_render_settings(const std::string& baseName,
 
     // Readback & IO
     s.use_pbo = true;
-    s.output_dir = "frames_tunnel_energy";
+    s.output_dir = "frames_tunnel_energy_sections";
 
     // Output: unique video name
     s.output_mode = OutputMode::FFmpegVideo;
@@ -53,9 +53,9 @@ RenderSettings init_render_settings(const std::string& baseName,
     return s;
 }
 
-// -----------------------------------------------------------------------------
-// Tiny helper – one line with defaults
-// -----------------------------------------------------------------------------
+// ============================================================================
+//  Tiny helpers
+// ============================================================================
 inline void emit_line(LineEmitContext& ctx,
     const Vec3& a,
     const Vec3& b,
@@ -83,24 +83,21 @@ inline void emit_line(LineEmitContext& ctx,
     ctx.add(lp);
 }
 
-// Simple clamp
 inline float clampf(float v, float lo, float hi)
 {
     return (v < lo) ? lo : (v > hi ? hi : v);
 }
 
-// -----------------------------------------------------------------------------
-// FlightPath – precomputed random walk inside a big cube
-// -----------------------------------------------------------------------------
+// ============================================================================
+//  FlightPath – precomputed random walk inside a big cube
+// ============================================================================
 struct FlightPath
 {
-    // List of nodes; each consecutive pair is approximately step_length apart
     std::vector<Vec3> nodes;
 
-    float step_length = 40.0f;    // units between samples along the path
-    float box_half = 2000.0f;  // cube is [-box_half, box_half]^3
+    float step_length = 40.0f;  // units between samples along the path
+    float box_half = 2000.0f; // cube is [-box_half, box_half]^3
 
-    // Build a random wandering path that stays inside the cube.
     void build_random_walk(int nodeCount,
         float stepLen,
         float cubeHalf)
@@ -150,7 +147,7 @@ struct FlightPath
                     float sign = (coord >= 0.0f) ? 1.0f : -1.0f;
                     float push = (0.3f + 0.9f * t) * (-sign); // toward center
 
-                    if (axis == 0)      boundaryPush.x += push;
+                    if (axis == 0) boundaryPush.x += push;
                     else if (axis == 1) boundaryPush.y += push;
                     else                boundaryPush.z += push;
                 };
@@ -159,7 +156,6 @@ struct FlightPath
             addAxisPush(pos.y, 1);
             addAxisPush(pos.z, 2);
 
-            // Combine previous direction + forward bias + randomness + boundary
             Vec3 combined =
                 dir * 1.4f +
                 randomSteer * wanderStrength +
@@ -222,15 +218,84 @@ struct FlightPath
     }
 };
 
-// -----------------------------------------------------------------------------
-// Camera rig – parameters for inside/orbit camera
-// -----------------------------------------------------------------------------
+// ============================================================================
+//  PathFrame – local coordinate frame along the path
+// ============================================================================
+struct PathFrame
+{
+    Vec3 origin;   // position on path at distance s
+    Vec3 forward;  // tangent along path
+    Vec3 right;    // horizontal-ish
+    Vec3 up;       // vertical-ish
+};
+
+inline PathFrame path_frame_at(const FlightPath& path, float s)
+{
+    PathFrame F{};
+
+    float L = path.total_length();
+    if (L <= 0.0f)
+    {
+        F.origin = make_vec3(0.0f, 0.0f, 0.0f);
+        F.forward = make_vec3(0.0f, 0.0f, 1.0f);
+        F.right = make_vec3(1.0f, 0.0f, 0.0f);
+        F.up = make_vec3(0.0f, 1.0f, 0.0f);
+        return F;
+    }
+
+    if (s < 0.0f) s = 0.0f;
+    if (s > L)    s = L;
+
+    float eps = 0.5f * path.step_length;
+    if (eps <= 0.0f) eps = 0.02f * L;
+
+    float s0 = s - eps;
+    float s1 = s + eps;
+    if (s0 < 0.0f) s0 = 0.0f;
+    if (s1 > L)    s1 = L;
+
+    Vec3 p0 = path.sample_at(s0);
+    Vec3 p1 = path.sample_at(s1);
+    Vec3 o = path.sample_at(s);
+
+    Vec3 f = p1 - p0;
+    float fl = length3(f);
+    if (fl < 1.0e-4f) f = make_vec3(0.0f, 0.0f, 1.0f);
+    else              f = f * (1.0f / fl);
+
+    Vec3 worldUp = make_vec3(0.0f, 1.0f, 0.0f);
+    Vec3 r = cross3(f, worldUp);
+    float rl = length3(r);
+    if (rl < 1.0e-4f) r = make_vec3(1.0f, 0.0f, 0.0f);
+    else              r = r * (1.0f / rl);
+
+    Vec3 u = normalize3(cross3(r, f));
+
+    F.origin = o;
+    F.forward = f;
+    F.right = r;
+    F.up = u;
+    return F;
+}
+
+inline Vec3 local_to_world(const PathFrame& F, const Vec3& local)
+{
+    // local = (x along right, y along up, z along forward)
+    return F.origin
+        + local.x * F.right
+        + local.y * F.up
+        + local.z * F.forward;
+}
+
+// ============================================================================
+//  Camera rig – parameters for inside/orbit camera
+// ============================================================================
 struct CameraRig
 {
     bool  inside_mode = true;  // true = fly inside, false = orbit outside
 
     // Inside mode
-    float fly_speed = 40.0f; // units per second along the tunnel
+    float fly_speed = 40.0f; // units per second along the path
     float fov_inside = 75.0f;
 
     // Orbit mode
@@ -240,205 +305,264 @@ struct CameraRig
     float fov_orbit = 60.0f;
 };
 
-// -----------------------------------------------------------------------------
-// TunnelSection – uses a FlightPath as its centerline
-// -----------------------------------------------------------------------------
+// ============================================================================
+//  Sections along the path
+// ============================================================================
+enum class SectionKind
+{
+    Tunnel,
+    Empty,
+    RingField
+};
+
+struct Section
+{
+    float s_start = 0.0f;
+    float s_end = 0.0f;
+    SectionKind kind = SectionKind::Tunnel;
+};
+
+// ============================================================================
+//  TunnelSection – just shape parameters
+// ============================================================================
 struct TunnelSection
 {
-    const FlightPath* path = nullptr;
-
     int   segments = 6;    // hexagon
-    int   rings = 40;   // how many cross-sections
+    int   rings = 40;   // discretization for drawing
     float radius = 40.0f;
-    float spacing = 60.0f; // nominal spacing used for length mapping
+};
 
-    float length_used = 0.0f; // part of the path we actually occupy
+// ============================================================================
+//  TunnelSurfacePoint & Painter
+// ============================================================================
+struct TunnelSurfacePoint
+{
+    float u = 0.0f; // 0..1 along the section
+    float v = 0.0f; // 0..1 around circumference
+    Vec3  worldPos;
+    PathFrame frame;
+};
 
-    void bind_path(const FlightPath* p)
+inline TunnelSurfacePoint make_surface_point(const FlightPath& path,
+    const TunnelSection& sec,
+    float s0, float s1,
+    float u, float v)
+{
+    TunnelSurfacePoint P{};
+
+    u = clampf(u, 0.0f, 1.0f);
+    v = clampf(v, 0.0f, 1.0f);
+
+    float L = s1 - s0;
+    if (L <= 0.0f) L = 1.0f;
+
+    float s = s0 + u * L;
+
+    PathFrame F = path_frame_at(path, s);
+
+    const float twoPi = 6.2831853f;
+    float angle = v * twoPi;
+    float R = sec.radius;
+
+    Vec3 local = make_vec3(std::cos(angle) * R,
+        std::sin(angle) * R,
+        0.0f);
+
+    Vec3 worldPos = local_to_world(F, local);
+
+    P.u = u;
+    P.v = v;
+    P.worldPos = worldPos;
+    P.frame = F;
+    return P;
+}
+
+struct TunnelSurfacePainter
+{
+    Vec3 stripeColor = make_vec3(1.8f, 0.8f, 0.9f);
+
+    // Simple animated diagonal stripes on the tunnel walls
+    void paint_stripes(LineEmitContext& ctx,
+        const FlightPath& path,
+        const TunnelSection& sec,
+        float s0, float s1,
+        float t) const
     {
-        path = p;
-        if (!path)
-        {
-            length_used = 0.0f;
-            return;
-        }
+        const int stripeCount = 7;
+        const int segs = 40;
 
-        float desired = (rings > 1) ? (float)(rings - 1) * spacing : 0.0f;
-        float maxPath = path->total_length();
-
-        if (desired <= 0.0f || maxPath <= 0.0f)
-            length_used = 0.0f;
-        else
-            length_used = (desired < maxPath) ? desired : maxPath;
-    }
-
-    float total_length() const
-    {
-        return length_used;
-    }
-
-    float s_for_ring(int ringIdx) const
-    {
-        if (rings <= 1)
-            return 0.0f;
-
-        if (ringIdx < 0) ringIdx = 0;
-        if (ringIdx > rings - 1) ringIdx = rings - 1;
-
-        float t = (float)ringIdx / (float)(rings - 1);
-        return t * length_used;
-    }
-
-    Vec3 center_for_ring(int ringIdx) const
-    {
-        if (!path)
-            return make_vec3(0.0f, 0.0f, (float)ringIdx * spacing);
-
-        float s = s_for_ring(ringIdx);
-        return path->sample_at(s);
-    }
-
-    Vec3 center_along(float s) const
-    {
-        if (!path)
-            return make_vec3(0.0f, 0.0f, s);
-
-        if (s < 0.0f)      s = 0.0f;
-        if (s > length_used) s = length_used;
-        return path->sample_at(s);
-    }
-
-    // Approximate tangent along centerline (for attachments / camera)
-    Vec3 tangent_along(float s) const
-    {
-        float L = total_length();
-        if (L <= 0.0f) return make_vec3(0.0f, 0.0f, 1.0f);
-
-        float eps = spacing * 0.5f;
-        if (eps <= 0.0f) eps = L * 0.02f;
-
-        float s0 = s - eps;
-        float s1 = s + eps;
-        if (s0 < 0.0f) s0 = 0.0f;
-        if (s1 > L)    s1 = L;
-
-        Vec3 p0 = center_along(s0);
-        Vec3 p1 = center_along(s1);
-        Vec3 v = p1 - p0;
-
-        float len = length3(v);
-        if (len < 1.0e-4f) return make_vec3(0.0f, 0.0f, 1.0f);
-        return v * (1.0f / len);
-    }
-
-    float radius_for_ring(int /*ringIdx*/) const
-    {
-        return radius;
-    }
-
-    // Vertex of a ring (hex) at ringIdx/segIdx
-    Vec3 ring_vertex(int ringIdx, int segIdx) const
-    {
         const float twoPi = 6.2831853f;
 
-        Vec3 center = center_for_ring(ringIdx);
-        float R = radius_for_ring(ringIdx);
+        for (int i = 0; i < stripeCount; ++i)
+        {
+            // Base position along the tunnel
+            float uBase = 0.15f + 0.7f * (float)i / (float)(stripeCount - 1);
 
-        float angleOffset = twoPi * 0.5f / (float)segments; // flat top/bottom
-        float a = twoPi * (float)segIdx / (float)segments + angleOffset;
+            for (int j = 0; j < segs; ++j)
+            {
+                float v0 = (float)j / (float)segs;
+                float v1 = (float)(j + 1) / (float)segs;
 
-        float x = std::cos(a) * R;
-        float y = std::sin(a) * R;
+                // Tilt the stripe in (u,v) space
+                float tilt = 0.25f;
+                float u0 = uBase + tilt * (v0 - 0.5f);
+                float u1 = uBase + tilt * (v1 - 0.5f);
 
-        return make_vec3(center.x + x, center.y + y, center.z);
+                // Wrap u into [0,1]
+                auto wrap01 = [](float x)
+                    {
+                        x = std::fmod(x, 1.0f);
+                        if (x < 0.0f) x += 1.0f;
+                        return x;
+                    };
+                u0 = wrap01(u0);
+                u1 = wrap01(u1);
+
+                TunnelSurfacePoint P0 = make_surface_point(path, sec, s0, s1, u0, v0);
+                TunnelSurfacePoint P1 = make_surface_point(path, sec, s0, s1, u1, v1);
+
+                float anim = 0.5f +
+                    0.5f * std::sin(twoPi * u0 + t * 1.8f + (float)i * 0.7f);
+
+                Vec3 col = stripeColor * (0.35f + 0.65f * anim);
+
+                emit_line(ctx,
+                    P0.worldPos,
+                    P1.worldPos,
+                    col,
+                    0.18f,
+                    85.0f);
+            }
+        }
     }
 };
 
-// -----------------------------------------------------------------------------
-// Tunnel – draws the geometry following TunnelSection
-// -----------------------------------------------------------------------------
+// ============================================================================
+//  Tunnel – draws geometry following the FlightPath using TunnelSection shape
+// ============================================================================
 struct Tunnel
 {
     TunnelSection section{};
 
     // Colors inspired by your reference
-    Vec3 frameColor = make_vec3(0.25f, 0.55f, 1.6f) * 2.0f;   // ring frames
-    Vec3 barColor = make_vec3(1.6f, 0.4f, 1.6f) * 2.0f;     // longitudinal bars
-    Vec3 coreColor = make_vec3(1.4f, 1.2f, 1.8f) * 2.0f;     // central core
+    Vec3 frameColor = make_vec3(0.25f, 0.55f, 1.6f) * 2.0f;  // ring frames
+    Vec3 barColor = make_vec3(1.6f, 0.4f, 1.6f) * 2.0f;    // longitudinal bars
+    Vec3 coreColor = make_vec3(1.4f, 1.2f, 1.8f) * 2.0f;    // central core
 
     bool draw_core = true;
 
-    void draw(LineEmitContext& ctx, float t) const
+    void draw_interval(LineEmitContext& ctx,
+        const FlightPath& path,
+        float s0, float s1,
+        float t) const
     {
         (void)t;
 
         const int rings = section.rings;
         const int segments = section.segments;
+        if (rings < 2 || segments < 3) return;
+        if (s1 <= s0) return;
 
-        if (rings < 2 || segments < 3)
-            return;
+        float L = s1 - s0;
 
-        // 1) Draw all ring frames
+        // 1) Rings
         for (int r = 0; r < rings; ++r)
         {
-            float pathFrac = (rings > 1) ? (float)r / (float)(rings - 1) : 0.0f;
+            float u = (rings > 1) ? (float)r / (float)(rings - 1) : 0.0f;
+            float s = s0 + u * L;
+
+            PathFrame F = path_frame_at(path, s);
+            float R = section.radius;
+
+            float pathFrac = u;
             float fade = 0.4f + 0.6f * (1.0f - pathFrac);
 
-            for (int s = 0; s < segments; ++s)
-            {
-                int sn = (s + 1) % segments;
+            const float twoPi = 6.2831853f;
+            float angleOffset = twoPi * 0.5f / (float)segments;
 
-                Vec3 a = section.ring_vertex(r, s);
-                Vec3 b = section.ring_vertex(r, sn);
+            for (int seg = 0; seg < segments; ++seg)
+            {
+                int segNext = (seg + 1) % segments;
+
+                float a0 = twoPi * (float)seg / (float)segments + angleOffset;
+                float a1 = twoPi * (float)segNext / (float)segments + angleOffset;
+
+                Vec3 local0 = make_vec3(std::cos(a0) * R,
+                    std::sin(a0) * R,
+                    0.0f);
+                Vec3 local1 = make_vec3(std::cos(a1) * R,
+                    std::sin(a1) * R,
+                    0.0f);
+
+                Vec3 p0 = local_to_world(F, local0);
+                Vec3 p1 = local_to_world(F, local1);
 
                 emit_line(ctx,
-                    a, b,
+                    p0, p1,
                     frameColor * fade,
                     0.32f,
                     110.0f);
             }
         }
 
-        // 2) Longitudinal bars between rings
+        // 2) Longitudinal bars
         for (int r = 0; r < rings - 1; ++r)
         {
-            float pathFrac = (rings > 1) ? (float)r / (float)(rings - 1) : 0.0f;
+            float u0 = (float)r / (float)(rings - 1);
+            float u1 = (float)(r + 1) / (float)(rings - 1);
+
+            float sA = s0 + u0 * L;
+            float sB = s0 + u1 * L;
+
+            PathFrame F0 = path_frame_at(path, sA);
+            PathFrame F1 = path_frame_at(path, sB);
+            float R = section.radius;
+
+            float pathFrac = u0;
             float fade = 0.5f + 0.5f * (1.0f - pathFrac);
 
-            for (int s = 0; s < segments; ++s)
+            const float twoPi = 6.2831853f;
+            float angleOffset = twoPi * 0.5f / (float)segments;
+
+            for (int seg = 0; seg < segments; ++seg)
             {
-                Vec3 a = section.ring_vertex(r, s);
-                Vec3 b = section.ring_vertex(r + 1, s);
+                float a = twoPi * (float)seg / (float)segments + angleOffset;
+
+                Vec3 local0 = make_vec3(std::cos(a) * R,
+                    std::sin(a) * R,
+                    0.0f);
+                Vec3 local1 = local0; // same angle
+
+                Vec3 p0 = local_to_world(F0, local0);
+                Vec3 p1 = local_to_world(F1, local1);
 
                 emit_line(ctx,
-                    a, b,
+                    p0, p1,
                     barColor * fade,
                     0.36f,
                     130.0f);
             }
         }
 
-        // 3) Optional bright core line along tunnel center
+        // 3) Core line (center of the tunnel)
         if (draw_core)
         {
-            float L = section.total_length();
-            if (L <= 0.0f)
-                return;
-
-            int coreSegs = rings * 3; // more refined centerline
+            int coreSegs = rings * 3;
+            if (coreSegs < 4) coreSegs = 4;
 
             for (int i = 0; i < coreSegs - 1; ++i)
             {
                 float u0 = (float)i / (float)(coreSegs - 1);
                 float u1 = (float)(i + 1) / (float)(coreSegs - 1);
 
-                float s0 = u0 * L;
-                float s1 = u1 * L;
+                float ss0 = s0 + u0 * L;
+                float ss1 = s0 + u1 * L;
 
-                Vec3 c0 = section.center_along(s0);
-                Vec3 c1 = section.center_along(s1);
+                Vec3 c0 = path.sample_at(ss0);
+                Vec3 c1 = path.sample_at(ss1);
 
-                float pulse = 0.7f + 0.3f * std::sin(6.2831853f * u0 + t * 1.3f);
+                float pulse = 0.7f + 0.3f *
+                    std::sin(6.2831853f * u0 + t * 1.3f);
 
                 emit_line(ctx,
                     c0, c1,
@@ -450,53 +574,48 @@ struct Tunnel
     }
 };
 
-// -----------------------------------------------------------------------------
-// EnergyFlow – fast glowing pulses traveling through the tunnel center
-// -----------------------------------------------------------------------------
+// ============================================================================
+//  EnergyFlow – pulses traveling through the tunnel center (per section)
+// ============================================================================
 struct EnergyFlow
 {
-    int   pulse_count = 7;     // how many pulses
-    float pulse_speed = 25.0f; // units per second along the tunnel
-    float pulse_length = 18.0f; // length of each pulse segment
+    int   pulse_count = 7;
+    float pulse_speed = 25.0f;  // units per second along section
+    float pulse_length = 18.0f;  // pulse length along the section
     float thickness = 0.75f;
     float base_intensity = 260.0f;
 
     Vec3 baseColor = make_vec3(2.0f, 1.8f, 0.6f); // warm golden-white
 
-    // Draw pulses using TunnelSection as the path
-    void draw(LineEmitContext& ctx,
-        const TunnelSection& sec,
+    void draw_interval(LineEmitContext& ctx,
+        const FlightPath& path,
+        float s0, float s1,
         float t) const
     {
-        float L = sec.total_length();
-        if (L <= 0.0f)
-            return;
+        float L = s1 - s0;
+        if (L <= 0.0f) return;
 
         for (int i = 0; i < pulse_count; ++i)
         {
-            // Each pulse has its own phase offset
             float phase = (float)i / (float)pulse_count;
 
-            // u in [0,1)
             float u = std::fmod(t * (pulse_speed / L) + phase, 1.0f);
             if (u < 0.0f) u += 1.0f;
 
-            float s_center = u * L;
+            float s_center = s0 + u * L;
 
             float halfLen = 0.5f * pulse_length;
-            float s0 = s_center - halfLen;
-            float s1 = s_center + halfLen;
+            float sa = s_center - halfLen;
+            float sb = s_center + halfLen;
 
-            // Clamp s0/s1 to [0,L]
-            if (s1 < 0.0f || s0 > L)
-                continue;
-            if (s0 < 0.0f) s0 = 0.0f;
-            if (s1 > L)   s1 = L;
+            if (sb < s0 || sa > s1) continue;
 
-            Vec3 p0 = sec.center_along(s0);
-            Vec3 p1 = sec.center_along(s1);
+            if (sa < s0) sa = s0;
+            if (sb > s1) sb = s1;
 
-            // Additional flicker per pulse
+            Vec3 p0 = path.sample_at(sa);
+            Vec3 p1 = path.sample_at(sb);
+
             float flicker = 0.75f + 0.25f *
                 std::sin(6.2831853f * (u + t * 0.5f));
 
@@ -511,100 +630,171 @@ struct EnergyFlow
     }
 };
 
-// -----------------------------------------------------------------------------
-// Attachments – simple billboards “glued” outside the tunnel wall
-// -----------------------------------------------------------------------------
-struct Attachments
+// ============================================================================
+//  External geometry: GeoInstance / GeoSet
+// ============================================================================
+enum class GeoType
 {
-    std::vector<float> anchor_s; // positions along tunnel centerline
+    Billboard,
+    WireBox
+};
 
-    void build(const TunnelSection& sec)
+struct GeoInstance
+{
+    float s = 0.0f;   // along path
+    Vec3  localPos;   // local (x,y,z) in path frame
+    Vec3  scale = make_vec3(1.0f, 1.0f, 1.0f);
+
+    float yaw = 0.0f; // rotation around local up (radians)
+    float pitch = 0.0f;
+    float roll = 0.0f;
+
+    GeoType type = GeoType::Billboard;
+
+    Vec3  color = make_vec3(1.0f, 1.0f, 1.0f);
+    float thickness = 0.25f;
+    float intensity = 150.0f;
+};
+
+struct GeoSet
+{
+    std::vector<GeoInstance> instances;
+
+    void build_demo(const FlightPath& path,
+        const TunnelSection& tunnelShape,
+        const std::vector<Section>& sections)
     {
-        anchor_s.clear();
+        instances.clear();
 
-        float L = sec.total_length();
-        if (L <= 0.0f) return;
+        const float twoPi = 6.2831853f;
+        float R = tunnelShape.radius + 30.0f;
 
-        int count = 8; // a few anchors along the visible segment
-        for (int i = 0; i < count; ++i)
+        // Place a few billboards around each Tunnel section
+        for (const Section& sec : sections)
         {
-            float u = (float)i / (float)count; // [0,1)
-            float s = u * L;
-            anchor_s.push_back(s);
+            if (sec.kind != SectionKind::Tunnel) continue;
+            if (sec.s_end <= sec.s_start) continue;
+
+            int countPerSection = 6;
+            for (int i = 0; i < countPerSection; ++i)
+            {
+                float u = Random::random_01();
+                float s = sec.s_start + u * (sec.s_end - sec.s_start);
+
+                float angle = twoPi * Random::random_01();
+
+                Vec3 localPos = make_vec3(std::cos(angle) * R,
+                    std::sin(angle) * R,
+                    0.0f);
+
+                GeoInstance inst;
+                inst.s = s;
+                inst.localPos = localPos;
+                inst.scale = make_vec3(35.0f, 22.0f, 1.0f);
+                inst.yaw = 0.0f;
+                inst.type = GeoType::Billboard;
+                inst.color = make_vec3(1.8f, 0.8f, 0.4f);
+                inst.thickness = 0.23f;
+                inst.intensity = 155.0f;
+
+                instances.push_back(inst);
+            }
+        }
+
+        (void)path; // not needed inside build, but kept for future extensions
+    }
+
+    void draw_billboard(LineEmitContext& ctx,
+        const PathFrame& F,
+        const GeoInstance& inst,
+        float t) const
+    {
+        (void)t;
+
+        // Base center in world space
+        Vec3 base = local_to_world(F, inst.localPos);
+
+        // Local axes
+        Vec3 right = F.right;
+        Vec3 up = F.up;
+
+        // Simple yaw around local up (if we want later)
+        // For now, we ignore yaw/pitch/roll to keep it simple.
+
+        Vec3 rightScaled = right * inst.scale.x;
+        Vec3 upScaled = up * inst.scale.y;
+
+        Vec3 pTL = base - rightScaled + upScaled;
+        Vec3 pTR = base + rightScaled + upScaled;
+        Vec3 pBR = base + rightScaled - upScaled;
+        Vec3 pBL = base - rightScaled - upScaled;
+
+        Vec3 frameCol = inst.color;
+
+        // Frame
+        emit_line(ctx, pTL, pTR, frameCol, inst.thickness, inst.intensity);
+        emit_line(ctx, pTR, pBR, frameCol, inst.thickness, inst.intensity);
+        emit_line(ctx, pBR, pBL, frameCol, inst.thickness, inst.intensity);
+        emit_line(ctx, pBL, pTL, frameCol, inst.thickness, inst.intensity);
+
+        // Simple "scanline" interior for flavor
+        int scanLines = 12;
+        for (int i = 0; i < scanLines; ++i)
+        {
+            float v = (scanLines > 1) ? (float)i / (float)(scanLines - 1) : 0.0f;
+            float k = 1.0f - 2.0f * v; // 1..-1
+
+            Vec3 rowOffset = upScaled * k * 0.8f;
+
+            Vec3 a = base - rightScaled * 0.85f + rowOffset;
+            Vec3 b = base + rightScaled * 0.85f + rowOffset;
+
+            float pulse = 0.5f + 0.5f * std::sin(6.2831853f * v + t * 1.2f);
+
+            Vec3 col = frameCol * (0.3f + 0.7f * pulse);
+
+            emit_line(ctx,
+                a, b,
+                col,
+                inst.thickness * 0.5f,
+                inst.intensity * 0.8f);
         }
     }
 
     void draw(LineEmitContext& ctx,
-        const TunnelSection& sec,
-        float /*t*/) const
+        const FlightPath& path,
+        float t) const
     {
-        if (anchor_s.empty()) return;
-
-        Vec3 worldUp = make_vec3(0.0f, 1.0f, 0.0f);
-
-        for (float s : anchor_s)
+        for (const GeoInstance& inst : instances)
         {
-            Vec3 c = sec.center_along(s);
-            Vec3 tg = sec.tangent_along(s);
+            PathFrame F = path_frame_at(path, inst.s);
 
-            // Build local frame: tg (forward), right, outward
-            Vec3 right = cross3(tg, worldUp);
-            float rLen = length3(right);
-            if (rLen < 1.0e-4f)
-                right = make_vec3(1.0f, 0.0f, 0.0f);
-            else
-                right = right * (1.0f / rLen);
-
-            Vec3 outward = cross3(right, tg);
-            float oLen = length3(outward);
-            if (oLen < 1.0e-4f)
-                outward = worldUp;
-            else
-                outward = outward * (1.0f / oLen);
-
-            // Move slightly outside the tunnel wall
-            float wallOffset = sec.radius + 10.0f;
-            Vec3  base = c + outward * wallOffset;
-
-            // Simple rectangular billboard
-            float halfW = 35.0f;
-            float halfH = 20.0f;
-
-            Vec3 rightScaled = right * halfW;
-            Vec3 upScaled = outward * halfH; // outward as "up" in this plane
-
-            Vec3 pTL = base - rightScaled + upScaled;
-            Vec3 pTR = base + rightScaled + upScaled;
-            Vec3 pBR = base + rightScaled - upScaled;
-            Vec3 pBL = base - rightScaled - upScaled;
-
-            Vec3 frameCol = make_vec3(1.8f, 0.8f, 0.4f);
-            float thick = 0.25f;
-            float inten = 150.0f;
-
-            // Frame
-            emit_line(ctx, pTL, pTR, frameCol, thick, inten);
-            emit_line(ctx, pTR, pBR, frameCol, thick, inten);
-            emit_line(ctx, pBR, pBL, frameCol, thick, inten);
-            emit_line(ctx, pBL, pTL, frameCol, thick, inten);
-
-            // Simple "X" inside – placeholder for graffiti / text later
-            emit_line(ctx, pTL, pBR, frameCol * 0.8f, thick * 0.7f, inten * 0.8f);
-            emit_line(ctx, pTR, pBL, frameCol * 0.8f, thick * 0.7f, inten * 0.8f);
+            switch (inst.type)
+            {
+            case GeoType::Billboard:
+                draw_billboard(ctx, F, inst, t);
+                break;
+            case GeoType::WireBox:
+            default:
+                // Not implemented yet in this example
+                break;
+            }
         }
     }
 };
 
-// -----------------------------------------------------------------------------
-// Universe – your scene container
-// -----------------------------------------------------------------------------
+// ============================================================================
+//  Universe – scene container
+// ============================================================================
 struct Universe
 {
     FlightPath  path{};
     CameraRig   camera{};
     Tunnel      tunnel{};
     EnergyFlow  energy{};
-    Attachments attachments{};
+    TunnelSurfacePainter painter{};
+    GeoSet      geo{};
+    std::vector<Section> sections;
 
     Universe()
     {
@@ -614,28 +804,54 @@ struct Universe
         const float cubeHalf = 2000.0f;
         path.build_random_walk(nodeCount, step, cubeHalf);
 
-        // 2) Bind path to tunnel
-        tunnel.section.path = &path;
-        tunnel.section.rings = 40;
-        tunnel.section.spacing = 60.0f;
-        tunnel.section.radius = 40.0f;
-        tunnel.section.bind_path(&path);
+        float L = path.total_length();
+        if (L <= 0.0f) L = 1.0f;
 
-        // 3) Camera defaults
+        // 2) Define a few sections along the path
+        //      [0, s1]   : Tunnel
+        //      [s1, s2]  : Empty
+        //      [s2, s3]  : Tunnel again
+        float s3 = 0.90f * L;
+        float s1 = 0.25f * s3;
+        float s2 = 0.60f * s3;
+
+        sections.clear();
+        sections.push_back(Section{ 0.0f, s1, SectionKind::Tunnel });
+        sections.push_back(Section{ s1,  s2, SectionKind::Empty });
+        sections.push_back(Section{ s2,  s3, SectionKind::Tunnel });
+
+        // 3) Tunnel shape
+        tunnel.section.segments = 6;
+        tunnel.section.rings = 40;
+        tunnel.section.radius = 40.0f;
+
+        // 4) Camera defaults
         camera.inside_mode = true;
         camera.fly_speed = 40.0f;
 
-        // 4) Energy tweaks (feel free to play)
+        // 5) Energy tweaks
         energy.pulse_count = 9;
+        energy.pulse_speed = 28.0f;
+        energy.pulse_length = 24.0f;
 
-        // 5) Build initial attachments along the tunnel
-        attachments.build(tunnel.section);
+        // 6) External geometry demo (billboards)
+        geo.build_demo(path, tunnel.section, sections);
+    }
+
+    // Helper: length of "interesting" region for camera
+    float interesting_length() const
+    {
+        if (sections.empty())
+            return path.total_length();
+
+        const Section& last = sections.back();
+        return last.s_end;
     }
 };
 
-// -----------------------------------------------------------------------------
-// Camera callback – reads Universe and positions camera
-// -----------------------------------------------------------------------------
+// ============================================================================
+//  Camera callback – reads Universe and positions camera
+// ============================================================================
 void camera_callback(int frame, float t, CameraParams& cam)
 {
     (void)frame;
@@ -655,15 +871,15 @@ void camera_callback(int frame, float t, CameraParams& cam)
     }
 
     CameraRig& cr = uni->camera;
-    TunnelSection& sec = uni->tunnel.section;
+    FlightPath& path = uni->path;
+
+    float totalLen = uni->interesting_length();
+    if (totalLen <= 0.0f) totalLen = path.total_length();
+    if (totalLen <= 0.0f) totalLen = 1.0f;
 
     if (cr.inside_mode)
     {
-        // --- Camera flies INSIDE the tunnel along its centerline ---
-        float totalLen = sec.total_length();
-        if (totalLen <= 0.0f) totalLen = 1.0f;
-
-        // Distance along the tunnel
+        // --- Camera flies INSIDE the path centerline ---
         float sCam = std::fmod(t * cr.fly_speed, totalLen);
         if (sCam < 0.0f) sCam += totalLen;
 
@@ -671,8 +887,8 @@ void camera_callback(int frame, float t, CameraParams& cam)
         float sAhead = sCam + lookAheadDist;
         if (sAhead > totalLen) sAhead = totalLen;
 
-        Vec3 eye = sec.center_along(sCam);
-        Vec3 target = sec.center_along(sAhead);
+        Vec3 eye = path.sample_at(sCam);
+        Vec3 target = path.sample_at(sAhead);
 
         Vec3 forward = target - eye;
         float fLen = length3(forward);
@@ -688,16 +904,16 @@ void camera_callback(int frame, float t, CameraParams& cam)
 
         cam.eye_x = eye.x;    cam.eye_y = eye.y;    cam.eye_z = eye.z;
         cam.target_x = target.x; cam.target_y = target.y; cam.target_z = target.z;
-        cam.up_x = up.x;     cam.up_y = up.y;     cam.up_z = up.z;
+        cam.up_x = up.x;      cam.up_y = up.y;      cam.up_z = up.z;
 
         cam.has_custom_fov = true;
         cam.fov_y_deg = cr.fov_inside;
     }
     else
     {
-        // --- External orbit around approximate tunnel center ---
-        float centerS = sec.total_length() * 0.5f;
-        Vec3  center = sec.center_along(centerS);
+        // --- External orbit around mid of "interesting" region ---
+        float centerS = uni->interesting_length() * 0.5f;
+        Vec3  center = path.sample_at(centerS);
 
         float angle = t * cr.orbit_speed * twoPi;
 
@@ -713,16 +929,16 @@ void camera_callback(int frame, float t, CameraParams& cam)
 
         cam.eye_x = eye.x;    cam.eye_y = eye.y;    cam.eye_z = eye.z;
         cam.target_x = target.x; cam.target_y = target.y; cam.target_z = target.z;
-        cam.up_x = up.x;     cam.up_y = up.y;     cam.up_z = up.z;
+        cam.up_x = up.x;      cam.up_y = up.y;      cam.up_z = up.z;
 
         cam.has_custom_fov = true;
         cam.fov_y_deg = cr.fov_orbit;
     }
 }
 
-// -----------------------------------------------------------------------------
-// Line callback – draws tunnel + energy pulses + attachments
-// -----------------------------------------------------------------------------
+// ============================================================================
+//  Line callback – draws sections + external geometry
+// ============================================================================
 void line_push_callback(int frame, float t, LineEmitContext& ctx)
 {
     (void)frame;
@@ -730,37 +946,64 @@ void line_push_callback(int frame, float t, LineEmitContext& ctx)
     auto* uni = static_cast<Universe*>(ctx.user_ptr);
     if (!uni) return;
 
-    // 1) Solid tunnel geometry
-    uni->tunnel.draw(ctx, t);
+    FlightPath& path = uni->path;
+    Tunnel& tunnel = uni->tunnel;
+    EnergyFlow& energy = uni->energy;
+    TunnelSurfacePainter& painter = uni->painter;
 
-    // 2) Energy pulses flying through the center
-    uni->energy.draw(ctx, uni->tunnel.section, t);
+    // 1) Draw per-section content
+    for (const Section& sec : uni->sections)
+    {
+        if (sec.s_end <= sec.s_start) continue;
 
-    // 3) First-pass attachments (billboards outside the wall)
-    uni->attachments.draw(ctx, uni->tunnel.section, t);
+        switch (sec.kind)
+        {
+        case SectionKind::Tunnel:
+        {
+            tunnel.draw_interval(ctx, path, sec.s_start, sec.s_end, t);
+            energy.draw_interval(ctx, path, sec.s_start, sec.s_end, t);
+            painter.paint_stripes(ctx, path, tunnel.section,
+                sec.s_start, sec.s_end, t);
+        } break;
+
+        case SectionKind::Empty:
+        {
+            // For now: nothing – this creates a feeling of empty space
+            // You could add rare rings / markers here later.
+        } break;
+
+        case SectionKind::RingField:
+        {
+            // Not used in this demo – reserved for future experiments.
+        } break;
+        }
+    }
+
+    // 2) External geometry (billboards attached to the path)
+    uni->geo.draw(ctx, path, t);
 
     ctx.flush_now();
 }
 
-// -----------------------------------------------------------------------------
-// Entry
-// -----------------------------------------------------------------------------
+// ============================================================================
+//  Entry
+// ============================================================================
 int main()
 {
-    std::cout << "example_tunnel_energy_universe_cube\n";
+    std::cout << "example_tunnel_energy_universe_sections\n";
     std::cout << "This code is in file: " << __FILE__ << "\n";
 
     const std::string uniqueName = WIRE_UNIQUE_NAME(g_base_output_filepath);
-    std::cout << "Video name: " << uniqueName << "\n";
+    std::cout << "Video name:  " << uniqueName << "\n";
     std::cout << "Output path: " << g_base_output_filepath
         << "/" << uniqueName << ".mp4\n";
 
     RenderSettings settings = init_render_settings(uniqueName, 4);
 
     Universe universe{};
-    // You can play with, for example:
-    // universe.camera.inside_mode = false;
-    // universe.tunnel.section.rings = 60; universe.tunnel.section.bind_path(&universe.path);
+    // You can play with these:
+    // universe.camera.inside_mode = false; // orbit outside
+    // universe.tunnel.section.rings = 60;
 
     renderSequencePush(
         settings,
