@@ -43,7 +43,7 @@ RenderSettings init_render_settings(const std::string& baseName,
 
     // Readback & IO
     s.use_pbo = true;
-    s.output_dir = "frames_tunnel_universe";
+    s.output_dir = "frames_tunnel_energy";
 
     // Output: unique video name
     s.output_mode = OutputMode::FFmpegVideo;
@@ -183,7 +183,7 @@ struct TunnelSection
         return make_vec3(center.x + x, center.y + y, center.z);
     }
 
-    // Continuous center along the tunnel, for camera
+    // Continuous center along the tunnel, for camera and energy pulses
     Vec3 center_along(float s, float t) const
     {
         if (rings <= 1 || spacing <= 0.0f)
@@ -229,7 +229,6 @@ struct Tunnel
     {
         const int   rings = section.rings;
         const int   segments = section.segments;
-        const float twoPi = 6.2831853f;
 
         if (rings < 2 || segments < 3)
             return;
@@ -237,16 +236,15 @@ struct Tunnel
         // 1) Draw all ring frames
         for (int r = 0; r < rings; ++r)
         {
+            float pathFrac = (rings > 1) ? (float)r / (float)(rings - 1) : 0.0f;
+            float fade = 0.4f + 0.6f * (1.0f - pathFrac);
+
             for (int s = 0; s < segments; ++s)
             {
                 int sn = (s + 1) % segments;
 
                 Vec3 a = section.ring_vertex(r, s, t);
                 Vec3 b = section.ring_vertex(r, sn, t);
-
-                // Mild fading along the length
-                float pathFrac = (rings > 1) ? (float)r / (float)(rings - 1) : 0.0f;
-                float fade = 0.4f + 0.6f * (1.0f - pathFrac);
 
                 emit_line(ctx,
                     a, b,
@@ -287,7 +285,7 @@ struct Tunnel
                 Vec3 c1 = section.center_at_baseZ(baseZ1, t);
 
                 float pathFrac = (rings > 1) ? (float)r / (float)(rings - 1) : 0.0f;
-                float pulse = 0.7f + 0.3f * std::sin(twoPi * pathFrac + t * 1.3f);
+                float pulse = 0.7f + 0.3f * std::sin(6.2831853f * pathFrac + t * 1.3f);
 
                 emit_line(ctx,
                     c0, c1,
@@ -300,12 +298,74 @@ struct Tunnel
 };
 
 // -----------------------------------------------------------------------------
+// EnergyFlow – fast glowing pulses traveling through the tunnel center
+// -----------------------------------------------------------------------------
+struct EnergyFlow
+{
+    int   pulse_count = 7;    // how many pulses
+    float pulse_speed = 25.0f; // units per second along the tunnel
+    float pulse_length = 18.0f; // length of each pulse segment
+    float thickness = 0.75f;
+    float base_intensity = 260.0f;
+
+    Vec3 baseColor = make_vec3(2.0f, 1.8f, 0.6f); // warm golden-white
+
+    // Draw pulses using TunnelSection as the path
+    void draw(LineEmitContext& ctx,
+        const TunnelSection& sec,
+        float t) const
+    {
+        float L = sec.total_length();
+        if (L <= 0.0f)
+            return;
+
+        for (int i = 0; i < pulse_count; ++i)
+        {
+            // Each pulse has its own phase offset
+            float phase = (float)i / (float)pulse_count;
+
+            // u in [0,1)
+            float u = std::fmod(t * (pulse_speed / L) + phase, 1.0f);
+            if (u < 0.0f) u += 1.0f;
+
+            float s_center = u * L;
+
+            float halfLen = 0.5f * pulse_length;
+            float s0 = s_center - halfLen;
+            float s1 = s_center + halfLen;
+
+            // Clamp s0/s1 to [0,L]
+            if (s1 < 0.0f || s0 > L)
+                continue;
+            if (s0 < 0.0f) s0 = 0.0f;
+            if (s1 > L)   s1 = L;
+
+            Vec3 p0 = sec.center_along(s0, t);
+            Vec3 p1 = sec.center_along(s1, t);
+
+            // Additional flicker per pulse
+            float flicker = 0.75f + 0.25f *
+                std::sin(6.2831853f * (u + t * 0.5f));
+
+            Vec3 color = baseColor * flicker;
+
+            emit_line(ctx,
+                p0, p1,
+                color,
+                thickness,
+                base_intensity * (0.7f + 0.3f * flicker));
+        }
+    }
+};
+
+// -----------------------------------------------------------------------------
 // Universe – your scene container
 // -----------------------------------------------------------------------------
 struct Universe
 {
-    CameraRig camera{};
-    Tunnel    tunnel{};
+    CameraRig  camera{};
+    Tunnel     tunnel{};
+    EnergyFlow energy{};
 };
 
 // -----------------------------------------------------------------------------
@@ -351,14 +411,14 @@ void camera_callback(int frame, float t, CameraParams& cam)
 
         Vec3 forward = target - eye;
         float fLen = length3(forward);
-        if (fLen < 1e-4f) forward = make_vec3(0.0f, 0.0f, 1.0f);
-        else              forward = forward * (1.0f / fLen);
+        if (fLen < 1.0e-4f) forward = make_vec3(0.0f, 0.0f, 1.0f);
+        else                forward = forward * (1.0f / fLen);
 
         Vec3 worldUp = make_vec3(0.0f, 1.0f, 0.0f);
         Vec3 right = cross3(forward, worldUp);
         float rLen = length3(right);
-        if (rLen < 1e-4f) right = make_vec3(1.0f, 0.0f, 0.0f);
-        else              right = right * (1.0f / rLen);
+        if (rLen < 1.0e-4f) right = make_vec3(1.0f, 0.0f, 0.0f);
+        else                right = right * (1.0f / rLen);
         Vec3 up = normalize3(cross3(right, forward));
 
         cam.eye_x = eye.x;    cam.eye_y = eye.y;    cam.eye_z = eye.z;
@@ -396,7 +456,7 @@ void camera_callback(int frame, float t, CameraParams& cam)
 }
 
 // -----------------------------------------------------------------------------
-// Line callback – draws the tunnel from Universe
+// Line callback – draws the tunnel + energy pulses from Universe
 // -----------------------------------------------------------------------------
 void line_push_callback(int frame, float t, LineEmitContext& ctx)
 {
@@ -405,7 +465,12 @@ void line_push_callback(int frame, float t, LineEmitContext& ctx)
     auto* uni = static_cast<Universe*>(ctx.user_ptr);
     if (!uni) return;
 
+    // 1) Solid tunnel geometry
     uni->tunnel.draw(ctx, t);
+
+    // 2) Energy pulses flying through the center
+    uni->energy.draw(ctx, uni->tunnel.section, t);
+
     ctx.flush_now();
 }
 
@@ -414,7 +479,7 @@ void line_push_callback(int frame, float t, LineEmitContext& ctx)
 // -----------------------------------------------------------------------------
 int main()
 {
-    std::cout << "example_tunnel_universe\n";
+    std::cout << "example_tunnel_energy_universe\n";
     std::cout << "This code is in file: " << __FILE__ << "\n";
 
     const std::string uniqueName = WIRE_UNIQUE_NAME(g_base_output_filepath);
@@ -425,8 +490,10 @@ int main()
     RenderSettings settings = init_render_settings(uniqueName, 4);
 
     Universe universe{};
-    // tweak a bit if you want:
-    // universe.camera.inside_mode = false; // try orbit mode
+    // Play with these:
+    // universe.camera.inside_mode = false;          // external orbit
+    // universe.energy.pulse_count = 10;
+    // universe.tunnel.section.rings = 32;
 
     renderSequencePush(
         settings,
