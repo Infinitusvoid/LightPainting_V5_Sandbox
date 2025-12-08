@@ -2,13 +2,19 @@ import os
 from datetime import datetime
 
 # -------------------------------------------------------------------
-# List of header files to ignore when searching for "last" .h file.
+# Configuration
 # -------------------------------------------------------------------
+# Subfolder where example headers live (relative to this .py file)
+EXAMPLES_SUBFOLDER = "Examples"   # change this if you use a different name
+
+# List of header files to ignore when searching for "last" .h file.
+# (These are names *inside* the examples folder.)
 IGNORED_HEADERS = {
     "WireEngine.h",
     "WireEngine_v3.h",
     "WireEngine_v4.h",
-    "make_new_version.h",   # if you ever have such a file, just an example
+    "WireEngine_v5.h",
+    "make_new_version.h",
     # Add more names here if needed
 }
 
@@ -31,12 +37,12 @@ def find_latest_header(folder):
         candidates.append((mtime, full))
 
     if not candidates:
-        print("[ERROR] No .h files found (after applying ignore list).")
+        print(f"[ERROR] No .h files found in {folder} (after applying ignore list).")
         return None
 
     candidates.sort(key=lambda x: x[0], reverse=True)
     latest_path = candidates[0][1]
-    print(f"[INFO] Latest header: {os.path.basename(latest_path)}")
+    print(f"[INFO] Latest header in {folder}: {os.path.basename(latest_path)}")
     return latest_path
 
 
@@ -49,30 +55,40 @@ def make_new_header_name():
 
 
 def main():
-    folder = os.path.dirname(os.path.abspath(__file__))
+    # Folder where this script (and .bat) live
+    base_folder = os.path.dirname(os.path.abspath(__file__))
 
-    latest_header = find_latest_header(folder)
+    # Folder where the example headers live
+    headers_folder = os.path.join(base_folder, EXAMPLES_SUBFOLDER)
+    if not os.path.isdir(headers_folder):
+        print(f"[ERROR] Examples folder does not exist: {headers_folder}")
+        raise SystemExit(1)
+
+    latest_header = find_latest_header(headers_folder)
     if latest_header is None:
         raise SystemExit(1)
 
     new_name = make_new_header_name()
-    new_path = os.path.join(folder, new_name)
+    new_path = os.path.join(headers_folder, new_name)
 
     # --- COPY HEADER IN BINARY MODE (no encoding issues) ------------------
     with open(latest_header, "rb") as src, open(new_path, "wb") as dst:
         dst.write(src.read())
 
-    print(f"[INFO] Created new header: {new_name}")
+    print(f"[INFO] Created new header in {EXAMPLES_SUBFOLDER}: {new_name}")
 
-    # Overwrite main.cpp with a single include line
-    main_cpp_path = os.path.join(folder, "main.cpp")
-    include_line = f'#include "{new_name}"\n'
+    # main.cpp lives in the base folder (alongside this script & .bat)
+    main_cpp_path = os.path.join(base_folder, "main.cpp")
+
+    # Use a forward slash for the include; MSVC is fine with that.
+    relative_include_path = f'{EXAMPLES_SUBFOLDER}/{new_name}'
+    include_line = f'#include "{relative_include_path}"\n'
 
     # main.cpp we can safely write as UTF-8 text
     with open(main_cpp_path, "w", encoding="utf-8") as f:
         f.write(include_line)
 
-    print(f"[INFO] main.cpp updated to include {new_name}")
+    print(f"[INFO] main.cpp updated to include {relative_include_path}")
 
 
 if __name__ == "__main__":

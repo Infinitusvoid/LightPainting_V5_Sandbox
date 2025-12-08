@@ -143,7 +143,7 @@
     <ClCompile Include="WireEngine_v5.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="example_0.h" />
+    <ClInclude Include="example_start.h" />
     <ClInclude Include="WireEngine_v5.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
