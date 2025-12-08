@@ -146,7 +146,7 @@
     <ClInclude Include="Examples\W_08_12_2025_11_51.h" />
     <ClInclude Include="example_start.h" />
     <ClInclude Include="WireEngine_v5.h" />
-    <ClInclude Include="WireExampleUtils.h" />
+    <ClInclude Include="WireUtil.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
