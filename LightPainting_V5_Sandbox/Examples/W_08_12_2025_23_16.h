@@ -28,8 +28,7 @@ RenderSettings init_render_settings(const std::string& baseName,
     // Additive neon
     s.line_blend_mode = LineBlendMode::AdditiveLightPainting;
 
-    // Simple tone; base exposure – you can tune this, now the scene
-    // is bright enough that you don't *need* x10
+    // Simple tone; you can tune this
     s.exposure = 2.5f * 10.0f;
     s.bloom_enabled = false;
     s.bloom_threshold = 10.0f;
@@ -246,7 +245,7 @@ struct TunnelSection
     const FlightPath* path = nullptr;
 
     int   segments = 6;    // hexagon
-    int   rings = 80;   // how many cross-sections
+    int   rings = 80;      // how many cross-sections
     float radius = 40.0f;
 
     float length_used = 0.0f; // path length actually used
@@ -853,10 +852,11 @@ inline const FontGlyph* get_font_glyph(char c)
 struct TextLabel
 {
     float       s = 0.0f;          // position along path
-    std::string text;                  // message
-    float       size = 100.0f;         // scale of glyph cells
+    std::string text;              // message
+    float       size = 4.0f;       // scale of glyph cells
     Vec3        color = make_vec3(2.0f, 1.8f, 2.1f);
-    Vec3        offset = make_vec3(0.0f, 0.0f, 0.0f); // (right, up, forward)
+    // Now interpreted in *camera space* (right, up, depth along camDir)
+    Vec3        offset = make_vec3(0.0f, 0.0f, 0.0f);
 };
 
 struct TextOnWires
@@ -874,9 +874,9 @@ struct TextOnWires
             TextLabel lbl{};
             lbl.s = 0.15f * L;              // in first Tunnel section [0, 0.25L]
             lbl.text = "HELLO COSMOS";
-            lbl.size = 4.0f;                   // big
+            lbl.size = 4.5f;
             lbl.color = make_vec3(2.6f, 2.3f, 2.9f);
-            // hover above the center line
+            // hover above the center line (in camera-space units)
             lbl.offset = make_vec3(0.0f, sec.radius * 0.25f, 0.0f);
             labels.push_back(lbl);
         }
@@ -886,7 +886,7 @@ struct TextOnWires
             TextLabel lbl{};
             lbl.s = 0.12f * L;              // also in first tunnel segment
             lbl.text = "WIRE ENGINE";
-            lbl.size = 3.0f * 10.0;
+            lbl.size = 3.5f;
             lbl.color = make_vec3(2.2f, 2.0f, 2.5f);
             // slightly to the right and up
             lbl.offset = make_vec3(sec.radius * 0.5f, sec.radius * 0.15f, 0.0f);
@@ -898,7 +898,7 @@ struct TextOnWires
             TextLabel lbl{};
             lbl.s = 0.55f * L;              // in third Tunnel section [0.45L, 0.70L]
             lbl.text = "COSMOS TUNNEL";
-            lbl.size = 3.2f * 10.0;
+            lbl.size = 3.5f;
             lbl.color = make_vec3(1.9f, 2.2f, 2.4f);
             // to the left, mid-height
             lbl.offset = make_vec3(-sec.radius * 0.6f, sec.radius * 0.1f, 0.0f);
@@ -911,18 +911,24 @@ struct TextOnWires
             // IMPORTANT: make sure it's in the last Tunnel section [0.90L, L]
             lbl.s = 0.93f * L;
             lbl.text = "LIGHT PAINTING";
-            lbl.size = 3.0f * 10.0;
+            lbl.size = 3.5f;
             lbl.color = make_vec3(2.5f, 2.0f, 2.1f);
             lbl.offset = make_vec3(0.0f, sec.radius * 0.4f, 0.0f);
             labels.push_back(lbl);
         }
     }
 
+    // NEW: camera-facing text – uses camera basis instead of path basis
     void draw_range(LineEmitContext& ctx,
         const TunnelSection& sec,
         float s_start, float s_end,
-        float t) const
+        float t,
+        const Vec3& camDir,
+        const Vec3& camRight,
+        const Vec3& camUp) const
     {
+        (void)t;
+
         if (labels.empty()) return;
         float L = sec.total_length();
         if (L <= 0.0f) return;
@@ -943,13 +949,11 @@ struct TextOnWires
             if (lab.s < s_lo || lab.s > s_hi) continue;
             if (lab.text.empty()) continue;
 
-            PathFrame frame = make_path_frame(sec, lab.s);
-
-            Vec3 base =
-                frame.pos +
-                frame.right * lab.offset.x +
-                frame.up * lab.offset.y +
-                frame.forward * lab.offset.z;
+            // Place label on the path center, then move in camera-space
+            Vec3 base = sec.center_along(lab.s);
+            base += camRight * lab.offset.x;
+            base += camUp * lab.offset.y;
+            base += camDir * lab.offset.z; // depth, currently zero
 
             int   n = (int)lab.text.size();
             float totalWidthCells = (float)n * advanceCells - gapCells;
@@ -958,8 +962,8 @@ struct TextOnWires
             float halfW = 0.5f * totalWidthCells * cellBase * lab.size;
             float halfH = 0.5f * totalHeightCells * cellBase * lab.size;
 
-            // Center text around base in the (right, up) plane
-            Vec3 origin = base - frame.right * halfW - frame.up * halfH;
+            // Center text around base in the (camRight, camUp) plane
+            Vec3 origin = base - camRight * halfW - camUp * halfH;
 
             for (int idx = 0; idx < n; ++idx)
             {
@@ -983,17 +987,17 @@ struct TextOnWires
                         float y0 = ((float)row) * cellBase * lab.size;
                         float y1 = ((float)row + 1.0f) * cellBase * lab.size;
 
-                        Vec3 p00 = origin + frame.right * x0 + frame.up * y0;
-                        Vec3 p10 = origin + frame.right * x1 + frame.up * y0;
-                        Vec3 p11 = origin + frame.right * x1 + frame.up * y1;
-                        Vec3 p01 = origin + frame.right * x0 + frame.up * y1;
+                        Vec3 p00 = origin + camRight * x0 + camUp * y0;
+                        Vec3 p10 = origin + camRight * x1 + camUp * y0;
+                        Vec3 p11 = origin + camRight * x1 + camUp * y1;
+                        Vec3 p01 = origin + camRight * x0 + camUp * y1;
 
                         float flicker = 0.75f + 0.25f *
                             std::sin(t * 2.0f + 0.7f * (float)(row + col + idx));
 
                         Vec3 colr = lab.color * flicker;
-                        float thick = 0.30f * lab.size;          // THICK strokes
-                        float inten = 2000.0f * flicker;         // VERY bright
+                        float thick = 0.30f * lab.size;          // thick strokes
+                        float inten = 2000.0f * flicker;         // very bright
 
                         emit_line(ctx, p00, p10, colr, thick, inten);
                         emit_line(ctx, p10, p11, colr, thick, inten);
@@ -1207,17 +1211,17 @@ void camera_callback(int frame, float t, CameraParams& cam)
         if (sCenter < 0.0f) sCenter += totalLen;
 
         // Build local frame at the camera's center position
-        PathFrame frame = make_path_frame(sec, sCenter);
+        PathFrame frameLocal = make_path_frame(sec, sCenter);
 
         // Eye is slightly behind center along -forward (prevents "wall collisions")
-        Vec3 eye = frame.pos - frame.forward * cr.cam_back_offset;
+        Vec3 eye = frameLocal.pos - frameLocal.forward * cr.cam_back_offset;
 
         // Look-ahead point along the path
         float sAhead = sCenter + cr.look_ahead_dist;
         if (sAhead > totalLen) sAhead = totalLen;
         Vec3 target = sec.center_along(sAhead);
 
-        Vec3 up = frame.up;
+        Vec3 up = frameLocal.up;
 
         cam.eye_x = eye.x;    cam.eye_y = eye.y;    cam.eye_z = eye.z;
         cam.target_x = target.x; cam.target_y = target.y; cam.target_z = target.z;
@@ -1487,6 +1491,7 @@ void effect_world_box(LineEmitContext& ctx,
     }
 }
 
+// Camera-facing text effect
 void effect_tunnel_text(LineEmitContext& ctx,
     const SectionContext& sctx,
     float t,
@@ -1495,10 +1500,71 @@ void effect_tunnel_text(LineEmitContext& ctx,
     Universe* uni = static_cast<Universe*>(user);
     if (!uni || !sctx.section || !sctx.tunnelSec) return;
 
+    TunnelSection& sec = uni->tunnel.section;
+    CameraRig& cr = uni->camera;
+
+    float totalLen = sec.total_length();
+    if (totalLen <= 0.0f) totalLen = 1.0f;
+
+    // Compute camera basis similar to camera_callback
+    Vec3 camPos{};
+    Vec3 camDir{};
+    Vec3 camRight{};
+    Vec3 camUp{};
+
+    if (cr.inside_mode)
+    {
+        float sCenter = std::fmod(t * cr.fly_speed, totalLen);
+        if (sCenter < 0.0f) sCenter += totalLen;
+
+        PathFrame frameLocal = make_path_frame(sec, sCenter);
+
+        camPos = frameLocal.pos - frameLocal.forward * cr.cam_back_offset;
+
+        float sAhead = sCenter + cr.look_ahead_dist;
+        if (sAhead > totalLen) sAhead = totalLen;
+        Vec3 target = sec.center_along(sAhead);
+
+        camDir = normalize3(target - camPos);
+    }
+    else
+    {
+        const float twoPi = 6.2831853f;
+
+        float centerS = sec.total_length() * 0.5f;
+        Vec3  center = sec.center_along(centerS);
+
+        float angle = t * cr.orbit_speed * twoPi;
+
+        float ox = std::cos(angle) * cr.orbit_radius;
+        float oz = std::sin(angle) * cr.orbit_radius;
+
+        camPos = make_vec3(center.x + ox,
+            center.y + cr.orbit_height,
+            center.z + oz);
+
+        Vec3 target = center;
+        camDir = normalize3(target - camPos);
+    }
+
+    // Build camera right/up from camDir
+    {
+        Vec3 worldUp = make_vec3(0.0f, 1.0f, 0.0f);
+        camRight = cross3(camDir, worldUp);
+        float rLen = length3(camRight);
+        if (rLen < 1.0e-4f)
+            camRight = make_vec3(1.0f, 0.0f, 0.0f);
+        else
+            camRight = camRight * (1.0f / rLen);
+
+        camUp = normalize3(cross3(camRight, camDir));
+    }
+
     float s0 = sctx.section->s_start;
     float s1 = sctx.section->s_end;
 
-    uni->text.draw_range(ctx, *sctx.tunnelSec, s0, s1, t);
+    uni->text.draw_range(ctx, *sctx.tunnelSec, s0, s1, t,
+        camDir, camRight, camUp);
 }
 
 // -----------------------------------------------------------------------------
@@ -1514,7 +1580,7 @@ int main()
     std::cout << "Output path: " << g_base_output_filepath
         << "/" << uniqueName << ".mp4\n";
 
-    // 60 seconds of flight
+    // Short test (1 second of flight) – bump to 4 or more when you're happy
     RenderSettings settings = init_render_settings(uniqueName, 60);
 
     Universe universe{};
