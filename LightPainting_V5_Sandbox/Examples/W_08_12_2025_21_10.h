@@ -6,15 +6,25 @@ using namespace WireEngine;
 // Shared tunnel constants (camera + drawing both use these)
 // -----------------------------------------------------------------------------
 constexpr int   TUNNEL_SEGMENTS = 6;      // hexagon
-constexpr int   TUNNEL_RINGS = 10;     // how many frames deep
 constexpr float TUNNEL_RADIUS = 40.0f;  // ring radius
 constexpr float TUNNEL_SPACING = 25.0f;  // distance between rings
 
-// Depth center of tunnel (mainly for orbit mode)
-constexpr float TUNNEL_Z_CENTER =
-(TUNNEL_RINGS - 1) * TUNNEL_SPACING * 0.5f;
+// How many rings to draw around the camera (on each side)
+constexpr int   TUNNEL_RINGS_HALF = 10;
+
+// Center used only for orbit debug
+constexpr float TUNNEL_Z_CENTER = 0.0f;
 
 constexpr bool CAMERA_INSIDE = true; // true = inside, false = orbit
+
+// -----------------------------------------------------------------------------
+// Scene parameters – shared between camera + lines via user_ptr
+// -----------------------------------------------------------------------------
+struct SceneParams
+{
+    float cam_z = 0.0f;  // camera position along tunnel "z"
+    float move_speed = 40.0f; // units per second in z-space
+};
 
 // -----------------------------------------------------------------------------
 // Minimal render settings for fast, crisp debug
@@ -69,11 +79,11 @@ RenderSettings init_render_settings(const std::string& baseName,
 // -----------------------------------------------------------------------------
 glm::vec3 tunnel_center(float z, float t)
 {
-    // Same bending logic as in draw_debug_tunnel
+    // Same bending logic as before, just factored out
     float bendPhase = z * 0.03f + t * 0.6f;
 
-    float offsetX = std::sin(bendPhase) * 30.0f; // 30 units left/right
-    float offsetY = std::cos(bendPhase * 0.8f) * 10.0f; // 10 units up/down
+    float offsetX = std::sin(bendPhase) * 30.0f;  // left/right
+    float offsetY = std::cos(bendPhase * 0.8f) * 10.0f;  // up/down
 
     return glm::vec3(offsetX, offsetY, z);
 }
@@ -86,36 +96,36 @@ void camera_callback(int frame, float t, CameraParams& cam)
     (void)frame;
     const float twoPi = 6.2831853f;
 
+    auto* scene = static_cast<SceneParams*>(cam.user_ptr);
+
     if (CAMERA_INSIDE)
     {
-        // ---- Fly INSIDE the tunnel ALONG its bent centerline ----
+        if (!scene) return;
 
-        // Parameter along z (we still treat the curve as parameterized by z)
-        float speed = 40.0f;         // world units per second in "z space"
-        float zCam = -50.0f + t * speed;
+        // Move along z over time
+        scene->cam_z = -50.0f + t * scene->move_speed;
+        float zCam = scene->cam_z;
 
         // Camera position on the curve
         glm::vec3 eyePos = tunnel_center(zCam, t);
 
-        // Look ahead along the same curve to get a forward direction
+        // Look ahead along the same curve
         float lookAheadDist = 60.0f;
         glm::vec3 aheadPos = tunnel_center(zCam + lookAheadDist, t);
 
         glm::vec3 forward = glm::normalize(aheadPos - eyePos);
 
-        // Build a stable camera frame
+        // Stable camera frame
         glm::vec3 worldUp(0.0f, 1.0f, 0.0f);
         glm::vec3 right = glm::normalize(glm::cross(forward, worldUp));
         if (glm::length(right) < 1e-3f)
             right = glm::vec3(1.0f, 0.0f, 0.0f);
         glm::vec3 up = glm::normalize(glm::cross(right, forward));
 
-        // Fill camera params
         cam.eye_x = eyePos.x;
         cam.eye_y = eyePos.y;
         cam.eye_z = eyePos.z;
 
-        // You can either use aheadPos or eyePos + forward * someDist
         glm::vec3 target = eyePos + forward * 80.0f;
 
         cam.target_x = target.x;
@@ -127,11 +137,11 @@ void camera_callback(int frame, float t, CameraParams& cam)
         cam.up_z = up.z;
 
         cam.has_custom_fov = true;
-        cam.fov_y_deg = 75.0f;  // a bit wider for “speed” feeling
+        cam.fov_y_deg = 75.0f;  // "speed" feeling
     }
     else
     {
-        // ---- Original ORBIT mode (for debugging the shape in 3D) ----
+        // ---- ORBIT mode (for debugging the shape in 3D) ----
         float orbitRadius = 220.0f;
         float orbitHeight = 40.0f;
         float orbitSpeed = 0.12f;
@@ -152,6 +162,10 @@ void camera_callback(int frame, float t, CameraParams& cam)
 
         cam.has_custom_fov = true;
         cam.fov_y_deg = 60.0f;
+
+        // Keep the tunnel centered around this z for the orbit mode
+        if (scene)
+            scene->cam_z = TUNNEL_Z_CENTER;
     }
 }
 
@@ -185,24 +199,29 @@ void line(LineEmitContext& ctx,
 }
 
 // -----------------------------------------------------------------------------
-// Build a simple hex-tunnel from rings + connectors, with a gentle bend
+// Build a bent hex-tunnel around a given camZ (sliding window)
 // -----------------------------------------------------------------------------
-void draw_debug_tunnel(LineEmitContext& ctx, float t)
+void draw_debug_tunnel(LineEmitContext& ctx, float t, float camZ)
 {
     const float twoPi = 6.2831853f;
     const float angleOffset = twoPi * 0.5f / TUNNEL_SEGMENTS; // flat top/bottom
 
-    auto ring_vertex = [&](int ringIdx, int segIdx) -> glm::vec3
+    // Integer index of the "segment" the camera is in
+    float   segmentF = camZ / TUNNEL_SPACING;
+    int     baseIndex = static_cast<int>(std::floor(segmentF));
+    float   baseZ = baseIndex * TUNNEL_SPACING;
+
+    auto ring_vertex = [&](int ringOffset, int segIdx) -> glm::vec3
         {
-            // Base "distance along the tunnel"
-            float baseZ = ringIdx * TUNNEL_SPACING;
+            // ringOffset = -TUNNEL_RINGS_HALF..+TUNNEL_RINGS_HALF
+            float z = baseZ + ringOffset * TUNNEL_SPACING;
 
             // Center of this ring follows the same curve as the camera
-            glm::vec3 center = tunnel_center(baseZ, t);
+            glm::vec3 center = tunnel_center(z, t);
 
             // Slight radius breathing so the tunnel feels alive
             float radius = TUNNEL_RADIUS *
-                (1.0f + 0.12f * std::sin(baseZ * 0.05f + t * 0.9f));
+                (1.0f + 0.12f * std::sin(z * 0.05f + t * 0.9f));
 
             // Local hex vertex around this bent center
             float a = twoPi * (float)segIdx / (float)TUNNEL_SEGMENTS + angleOffset;
@@ -216,8 +235,12 @@ void draw_debug_tunnel(LineEmitContext& ctx, float t)
     glm::vec3 frameColor = glm::vec3(0.25f, 0.55f, 1.6f) * 2.0f;
     glm::vec3 barColor = glm::vec3(1.6f, 0.4f, 1.6f) * 2.0f;
 
+    // Visible rings: a sliding window centered around camZ
+    const int R_MIN = -TUNNEL_RINGS_HALF;
+    const int R_MAX = +TUNNEL_RINGS_HALF;
+
     // 1) Draw all hex frames
-    for (int r = 0; r < TUNNEL_RINGS; ++r)
+    for (int r = R_MIN; r <= R_MAX; ++r)
     {
         for (int s = 0; s < TUNNEL_SEGMENTS; ++s)
         {
@@ -230,7 +253,7 @@ void draw_debug_tunnel(LineEmitContext& ctx, float t)
     }
 
     // 2) Connect frames with longitudinal bars
-    for (int r = 0; r < TUNNEL_RINGS - 1; ++r)
+    for (int r = R_MIN; r < R_MAX; ++r)
     {
         for (int s = 0; s < TUNNEL_SEGMENTS; ++s)
         {
@@ -243,12 +266,16 @@ void draw_debug_tunnel(LineEmitContext& ctx, float t)
 }
 
 // -----------------------------------------------------------------------------
-// Line callback – draw the (slightly animated, bent) tunnel
+// Line callback – draw the infinite-ish tunnel around the camera
 // -----------------------------------------------------------------------------
 void line_push_callback(int frame, float t, LineEmitContext& ctx)
 {
     (void)frame;
-    draw_debug_tunnel(ctx, t);
+
+    auto* scene = static_cast<SceneParams*>(ctx.user_ptr);
+    float camZ = scene ? scene->cam_z : 0.0f;
+
+    draw_debug_tunnel(ctx, t, camZ);
     ctx.flush_now();
 }
 
@@ -257,7 +284,7 @@ void line_push_callback(int frame, float t, LineEmitContext& ctx)
 // -----------------------------------------------------------------------------
 int main()
 {
-    std::cout << "example_tunnel_debug_follow_curve\n";
+    std::cout << "example_tunnel_infinite_follow_curve\n";
     std::cout << "This code is in file: " << __FILE__ << "\n";
 
     const std::string uniqueName = WIRE_UNIQUE_NAME(g_base_output_filepath);
@@ -265,13 +292,14 @@ int main()
     std::cout << "Output path: " << g_base_output_filepath
         << "/" << uniqueName << ".mp4\n";
 
+    SceneParams   scene{};
     RenderSettings settings = init_render_settings(uniqueName, 4);
 
     renderSequencePush(
         settings,
         camera_callback,
         line_push_callback,
-        nullptr            // no user_ptr needed
+        &scene    // shared SceneParams for camera + lines
     );
 
     VLC::play(g_base_output_filepath + "/" + uniqueName + ".mp4");
