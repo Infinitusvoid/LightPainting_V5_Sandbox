@@ -14,6 +14,8 @@ constexpr float TUNNEL_SPACING = 25.0f;  // distance between rings
 constexpr float TUNNEL_Z_CENTER =
 (TUNNEL_RINGS - 1) * TUNNEL_SPACING * 0.5f;
 
+constexpr bool CAMERA_INSIDE = true; // true = inside, false = orbit
+
 // -----------------------------------------------------------------------------
 // Minimal render settings for fast, crisp debug
 // -----------------------------------------------------------------------------
@@ -68,33 +70,55 @@ RenderSettings init_render_settings(const std::string& baseName,
 void camera_callback(int frame, float t, CameraParams& cam)
 {
     (void)frame;
-
     const float twoPi = 6.2831853f;
 
-    // Orbit parameters
-    float orbitRadius = 220.0f;
-    float orbitHeight = 40.0f;
-    float orbitSpeed = 0.12f;     // revolutions per second-ish
+    if (CAMERA_INSIDE)
+    {
+        // ---- Fly INSIDE the tunnel along +Z ----
+        float speed = 40.0f;          // units per second
+        float zCam = -50.0f + t * speed;
 
-    float angle = t * orbitSpeed * twoPi;
+        cam.eye_x = 0.0f;
+        cam.eye_y = 0.0f;
+        cam.eye_z = zCam;
 
-    // Orbit in XZ around tunnel center
-    cam.eye_x = std::cos(angle) * orbitRadius;
-    cam.eye_y = orbitHeight;
-    cam.eye_z = std::sin(angle) * orbitRadius + TUNNEL_Z_CENTER;
+        cam.target_x = 0.0f;
+        cam.target_y = 0.0f;
+        cam.target_z = zCam + 80.0f;  // look forward along +Z
 
-    // Look at the tunnel center
-    cam.target_x = 0.0f;
-    cam.target_y = 0.0f;
-    cam.target_z = TUNNEL_Z_CENTER;
+        cam.up_x = 0.0f;
+        cam.up_y = 1.0f;
+        cam.up_z = 0.0f;
 
-    cam.up_x = 0.0f;
-    cam.up_y = 1.0f;
-    cam.up_z = 0.0f;
+        cam.has_custom_fov = true;
+        cam.fov_y_deg = 75.0f;       // a bit wider for “speed” feeling
+    }
+    else
+    {
+        // ---- Original ORBIT mode (for debugging the shape in 3D) ----
+        float orbitRadius = 220.0f;
+        float orbitHeight = 40.0f;
+        float orbitSpeed = 0.12f;
 
-    cam.has_custom_fov = true;
-    cam.fov_y_deg = 60.0f;
+        float angle = t * orbitSpeed * twoPi;
+
+        cam.eye_x = std::cos(angle) * orbitRadius;
+        cam.eye_y = orbitHeight;
+        cam.eye_z = std::sin(angle) * orbitRadius + TUNNEL_Z_CENTER;
+
+        cam.target_x = 0.0f;
+        cam.target_y = 0.0f;
+        cam.target_z = TUNNEL_Z_CENTER;
+
+        cam.up_x = 0.0f;
+        cam.up_y = 1.0f;
+        cam.up_z = 0.0f;
+
+        cam.has_custom_fov = true;
+        cam.fov_y_deg = 60.0f;
+    }
 }
+
 
 // -----------------------------------------------------------------------------
 // Debug helper: one line with default look
