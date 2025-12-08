@@ -10,7 +10,7 @@ constexpr int   TUNNEL_RINGS = 10;     // how many frames deep
 constexpr float TUNNEL_RADIUS = 40.0f;  // ring radius
 constexpr float TUNNEL_SPACING = 25.0f;  // distance between rings
 
-// Depth center of tunnel
+// Depth center of tunnel (mainly for orbit mode)
 constexpr float TUNNEL_Z_CENTER =
 (TUNNEL_RINGS - 1) * TUNNEL_SPACING * 0.5f;
 
@@ -65,7 +65,21 @@ RenderSettings init_render_settings(const std::string& baseName,
 }
 
 // -----------------------------------------------------------------------------
-// Camera: orbit around tunnel center so depth is obvious
+// Shared curve: center of the tunnel as a function of z + time
+// -----------------------------------------------------------------------------
+glm::vec3 tunnel_center(float z, float t)
+{
+    // Same bending logic as in draw_debug_tunnel
+    float bendPhase = z * 0.03f + t * 0.6f;
+
+    float offsetX = std::sin(bendPhase) * 30.0f; // 30 units left/right
+    float offsetY = std::cos(bendPhase * 0.8f) * 10.0f; // 10 units up/down
+
+    return glm::vec3(offsetX, offsetY, z);
+}
+
+// -----------------------------------------------------------------------------
+// Camera: inside mode follows the tunnel curve; orbit mode orbits around it
 // -----------------------------------------------------------------------------
 void camera_callback(int frame, float t, CameraParams& cam)
 {
@@ -74,24 +88,46 @@ void camera_callback(int frame, float t, CameraParams& cam)
 
     if (CAMERA_INSIDE)
     {
-        // ---- Fly INSIDE the tunnel along +Z ----
-        float speed = 40.0f;          // units per second
+        // ---- Fly INSIDE the tunnel ALONG its bent centerline ----
+
+        // Parameter along z (we still treat the curve as parameterized by z)
+        float speed = 40.0f;         // world units per second in "z space"
         float zCam = -50.0f + t * speed;
 
-        cam.eye_x = 0.0f;
-        cam.eye_y = 0.0f;
-        cam.eye_z = zCam;
+        // Camera position on the curve
+        glm::vec3 eyePos = tunnel_center(zCam, t);
 
-        cam.target_x = 0.0f;
-        cam.target_y = 0.0f;
-        cam.target_z = zCam + 80.0f;  // look forward along +Z
+        // Look ahead along the same curve to get a forward direction
+        float lookAheadDist = 60.0f;
+        glm::vec3 aheadPos = tunnel_center(zCam + lookAheadDist, t);
 
-        cam.up_x = 0.0f;
-        cam.up_y = 1.0f;
-        cam.up_z = 0.0f;
+        glm::vec3 forward = glm::normalize(aheadPos - eyePos);
+
+        // Build a stable camera frame
+        glm::vec3 worldUp(0.0f, 1.0f, 0.0f);
+        glm::vec3 right = glm::normalize(glm::cross(forward, worldUp));
+        if (glm::length(right) < 1e-3f)
+            right = glm::vec3(1.0f, 0.0f, 0.0f);
+        glm::vec3 up = glm::normalize(glm::cross(right, forward));
+
+        // Fill camera params
+        cam.eye_x = eyePos.x;
+        cam.eye_y = eyePos.y;
+        cam.eye_z = eyePos.z;
+
+        // You can either use aheadPos or eyePos + forward * someDist
+        glm::vec3 target = eyePos + forward * 80.0f;
+
+        cam.target_x = target.x;
+        cam.target_y = target.y;
+        cam.target_z = target.z;
+
+        cam.up_x = up.x;
+        cam.up_y = up.y;
+        cam.up_z = up.z;
 
         cam.has_custom_fov = true;
-        cam.fov_y_deg = 75.0f;       // a bit wider for “speed” feeling
+        cam.fov_y_deg = 75.0f;  // a bit wider for “speed” feeling
     }
     else
     {
@@ -118,7 +154,6 @@ void camera_callback(int frame, float t, CameraParams& cam)
         cam.fov_y_deg = 60.0f;
     }
 }
-
 
 // -----------------------------------------------------------------------------
 // Debug helper: one line with default look
@@ -150,9 +185,6 @@ void line(LineEmitContext& ctx,
 }
 
 // -----------------------------------------------------------------------------
-// Build a simple hex-tunnel from rings + connectors
-// -----------------------------------------------------------------------------
-// -----------------------------------------------------------------------------
 // Build a simple hex-tunnel from rings + connectors, with a gentle bend
 // -----------------------------------------------------------------------------
 void draw_debug_tunnel(LineEmitContext& ctx, float t)
@@ -165,14 +197,8 @@ void draw_debug_tunnel(LineEmitContext& ctx, float t)
             // Base "distance along the tunnel"
             float baseZ = ringIdx * TUNNEL_SPACING;
 
-            // --- Bend the tunnel in X/Y as we go along Z ---
-            float bendPhase = baseZ * 0.03f + t * 0.6f;
-
-            // How far we bend sideways
-            float offsetX = std::sin(bendPhase) * 30.0f;   // 30 units left/right
-            float offsetY = std::cos(bendPhase * 0.8f) * 10.0f; // 10 units up/down
-
-            glm::vec3 center(offsetX, offsetY, baseZ);
+            // Center of this ring follows the same curve as the camera
+            glm::vec3 center = tunnel_center(baseZ, t);
 
             // Slight radius breathing so the tunnel feels alive
             float radius = TUNNEL_RADIUS *
@@ -216,13 +242,12 @@ void draw_debug_tunnel(LineEmitContext& ctx, float t)
     }
 }
 
-
 // -----------------------------------------------------------------------------
-// Line callback – just draw the static tunnel
+// Line callback – draw the (slightly animated, bent) tunnel
 // -----------------------------------------------------------------------------
 void line_push_callback(int frame, float t, LineEmitContext& ctx)
 {
-    (void)frame; (void)t;
+    (void)frame;
     draw_debug_tunnel(ctx, t);
     ctx.flush_now();
 }
@@ -232,7 +257,7 @@ void line_push_callback(int frame, float t, LineEmitContext& ctx)
 // -----------------------------------------------------------------------------
 int main()
 {
-    std::cout << "example_tunnel_debug_orbit\n";
+    std::cout << "example_tunnel_debug_follow_curve\n";
     std::cout << "This code is in file: " << __FILE__ << "\n";
 
     const std::string uniqueName = WIRE_UNIQUE_NAME(g_base_output_filepath);
