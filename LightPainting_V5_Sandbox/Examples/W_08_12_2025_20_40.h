@@ -144,8 +144,8 @@ void draw_debug_tunnel(LineEmitContext& ctx)
         };
 
     // Colors similar to your reference: blue frames, magenta connectors
-    glm::vec3 frameColor = glm::vec3(0.25f, 0.55f, 1.6f);
-    glm::vec3 barColor = glm::vec3(1.6f, 0.4f, 1.6f);
+    glm::vec3 frameColor = glm::vec3(0.25f, 0.55f, 1.6f) * 2.0f;
+    glm::vec3 barColor = glm::vec3(1.6f, 0.4f, 1.6f) * 2.0f;
 
     // 1) Draw all hex frames
     for (int r = 0; r < TUNNEL_RINGS; ++r)
