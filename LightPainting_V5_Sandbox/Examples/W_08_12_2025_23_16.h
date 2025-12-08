@@ -1515,7 +1515,7 @@ int main()
         << "/" << uniqueName << ".mp4\n";
 
     // 60 seconds of flight
-    RenderSettings settings = init_render_settings(uniqueName, 1);
+    RenderSettings settings = init_render_settings(uniqueName, 60);
 
     Universe universe{};
 
