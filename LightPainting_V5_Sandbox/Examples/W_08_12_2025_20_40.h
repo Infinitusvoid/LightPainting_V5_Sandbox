@@ -3,6 +3,18 @@
 using namespace WireEngine;
 
 // -----------------------------------------------------------------------------
+// Shared tunnel constants (camera + drawing both use these)
+// -----------------------------------------------------------------------------
+constexpr int   TUNNEL_SEGMENTS = 6;      // hexagon
+constexpr int   TUNNEL_RINGS = 10;     // how many frames deep
+constexpr float TUNNEL_RADIUS = 40.0f;  // ring radius
+constexpr float TUNNEL_SPACING = 25.0f;  // distance between rings
+
+// Depth center of tunnel
+constexpr float TUNNEL_Z_CENTER =
+(TUNNEL_RINGS - 1) * TUNNEL_SPACING * 0.5f;
+
+// -----------------------------------------------------------------------------
 // Minimal render settings for fast, crisp debug
 // -----------------------------------------------------------------------------
 RenderSettings init_render_settings(const std::string& baseName,
@@ -23,7 +35,7 @@ RenderSettings init_render_settings(const std::string& baseName,
     // Additive neon
     s.line_blend_mode = LineBlendMode::AdditiveLightPainting;
 
-    // Keep it fairly neutral; bloom OFF for clean debug
+    // Simple tone; bloom OFF for clean debug
     s.exposure = 1.5f;
     s.bloom_enabled = false;
     s.bloom_threshold = 10.0f;
@@ -51,20 +63,30 @@ RenderSettings init_render_settings(const std::string& baseName,
 }
 
 // -----------------------------------------------------------------------------
-// Simple camera: fixed position looking down the tunnel
+// Camera: orbit around tunnel center so depth is obvious
 // -----------------------------------------------------------------------------
 void camera_callback(int frame, float t, CameraParams& cam)
 {
-    (void)frame; (void)t;
+    (void)frame;
 
-    // Camera behind the first ring, looking forward along +Z
-    cam.eye_x = 0.0f;
-    cam.eye_y = 0.0f;
-    cam.eye_z = -150.0f;
+    const float twoPi = 6.2831853f;
 
+    // Orbit parameters
+    float orbitRadius = 220.0f;
+    float orbitHeight = 40.0f;
+    float orbitSpeed = 0.12f;     // revolutions per second-ish
+
+    float angle = t * orbitSpeed * twoPi;
+
+    // Orbit in XZ around tunnel center
+    cam.eye_x = std::cos(angle) * orbitRadius;
+    cam.eye_y = orbitHeight;
+    cam.eye_z = std::sin(angle) * orbitRadius + TUNNEL_Z_CENTER;
+
+    // Look at the tunnel center
     cam.target_x = 0.0f;
     cam.target_y = 0.0f;
-    cam.target_z = 150.0f;
+    cam.target_z = TUNNEL_Z_CENTER;
 
     cam.up_x = 0.0f;
     cam.up_y = 1.0f;
@@ -109,33 +131,28 @@ void line(LineEmitContext& ctx,
 void draw_debug_tunnel(LineEmitContext& ctx)
 {
     const float twoPi = 6.2831853f;
-
-    const int   segments = 6;      // hexagon
-    const int   rings = 10;     // how many frames deep
-    const float radius = 40.0f;  // ring radius
-    const float spacing = 25.0f;  // distance between rings
-    const float angleOffset = twoPi * 0.5f / segments; // so top/bottom are flat
+    const float angleOffset = twoPi * 0.5f / TUNNEL_SEGMENTS; // flat top/bottom
 
     auto ring_vertex = [&](int ringIdx, int segIdx) -> glm::vec3
         {
-            float z = ringIdx * spacing; // depth
-            float a = twoPi * (float)segIdx / (float)segments + angleOffset;
+            float z = ringIdx * TUNNEL_SPACING;
+            float a = twoPi * (float)segIdx / (float)TUNNEL_SEGMENTS + angleOffset;
 
-            float x = std::cos(a) * radius;
-            float y = std::sin(a) * radius;
+            float x = std::cos(a) * TUNNEL_RADIUS;
+            float y = std::sin(a) * TUNNEL_RADIUS;
             return glm::vec3(x, y, z);
         };
 
-    // Colors similar to reference: blue frames, magenta connectors
+    // Colors similar to your reference: blue frames, magenta connectors
     glm::vec3 frameColor = glm::vec3(0.25f, 0.55f, 1.6f);
     glm::vec3 barColor = glm::vec3(1.6f, 0.4f, 1.6f);
 
     // 1) Draw all hex frames
-    for (int r = 0; r < rings; ++r)
+    for (int r = 0; r < TUNNEL_RINGS; ++r)
     {
-        for (int s = 0; s < segments; ++s)
+        for (int s = 0; s < TUNNEL_SEGMENTS; ++s)
         {
-            int sNext = (s + 1) % segments;
+            int sNext = (s + 1) % TUNNEL_SEGMENTS;
             glm::vec3 a = ring_vertex(r, s);
             glm::vec3 b = ring_vertex(r, sNext);
 
@@ -144,9 +161,9 @@ void draw_debug_tunnel(LineEmitContext& ctx)
     }
 
     // 2) Connect frames with longitudinal bars
-    for (int r = 0; r < rings - 1; ++r)
+    for (int r = 0; r < TUNNEL_RINGS - 1; ++r)
     {
-        for (int s = 0; s < segments; ++s)
+        for (int s = 0; s < TUNNEL_SEGMENTS; ++s)
         {
             glm::vec3 a = ring_vertex(r, s);
             glm::vec3 b = ring_vertex(r + 1, s);
@@ -171,7 +188,7 @@ void line_push_callback(int frame, float t, LineEmitContext& ctx)
 // -----------------------------------------------------------------------------
 int main()
 {
-    std::cout << "example_tunnel_debug\n";
+    std::cout << "example_tunnel_debug_orbit\n";
     std::cout << "This code is in file: " << __FILE__ << "\n";
 
     const std::string uniqueName = WIRE_UNIQUE_NAME(g_base_output_filepath);
@@ -185,7 +202,7 @@ int main()
         settings,
         camera_callback,
         line_push_callback,
-        nullptr            // we don't use user_ptr in this debug version
+        nullptr            // no user_ptr needed
     );
 
     VLC::play(g_base_output_filepath + "/" + uniqueName + ".mp4");
