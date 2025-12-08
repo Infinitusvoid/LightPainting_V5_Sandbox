@@ -35,5 +35,8 @@
     <ClInclude Include="example_start.h">
       <Filter>Source Files\Examples</Filter>
     </ClInclude>
+    <ClInclude Include="Examples\W_08_12_2025_11_51.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>
