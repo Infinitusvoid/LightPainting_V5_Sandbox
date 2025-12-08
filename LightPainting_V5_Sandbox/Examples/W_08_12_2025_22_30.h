@@ -1,6 +1,7 @@
 #pragma once
 
 #include "WireUtil.h"
+#include <cctype> // for std::toupper
 
 using namespace WireEngine;
 using std::vector;
@@ -224,8 +225,10 @@ struct CameraRig
     bool  inside_mode = true;  // true = fly inside, false = orbit outside
 
     // Inside mode
-    float fly_speed = 40.0f; // units per second along the tunnel
+    float fly_speed = 40.0f;   // units per second along the tunnel
     float fov_inside = 75.0f;
+    float cam_back_offset = 20.0f;   // how far back from centerline we sit
+    float look_ahead_dist = 80.0f;   // how far ahead we look along the path
 
     // Orbit mode
     float orbit_radius = 260.0f;
@@ -775,6 +778,222 @@ struct GeoSet
 };
 
 // -----------------------------------------------------------------------------
+// Simple 3x5 line font + TextOnWires
+// -----------------------------------------------------------------------------
+struct FontGlyph
+{
+    const char* rows[5]; // each row is 3 chars: '.' or '#'
+};
+
+inline const FontGlyph* get_font_glyph(char c)
+{
+    unsigned char uc = (unsigned char)c;
+    c = (char)std::toupper(uc);
+
+    // Define a small 3x5 stroke font for A–Z
+    static const FontGlyph GL_A = { { ".#.", "#.#", "###", "#.#", "#.#" } };
+    static const FontGlyph GL_B = { { "##.", "#.#", "##.", "#.#", "##." } };
+    static const FontGlyph GL_C = { { ".##", "#..", "#..", "#..", ".##" } };
+    static const FontGlyph GL_D = { { "##.", "#.#", "#.#", "#.#", "##." } };
+    static const FontGlyph GL_E = { { "###", "#..", "##.", "#..", "###" } };
+    static const FontGlyph GL_F = { { "###", "#..", "##.", "#..", "#.." } };
+    static const FontGlyph GL_G = { { ".##", "#..", "#.#", "#.#", ".##" } };
+    static const FontGlyph GL_H = { { "#.#", "#.#", "###", "#.#", "#.#" } };
+    static const FontGlyph GL_I = { { "###", ".#.", ".#.", ".#.", "###" } };
+    static const FontGlyph GL_J = { { "..#", "..#", "..#", "#.#", ".#." } };
+    static const FontGlyph GL_K = { { "#.#", "#.#", "##.", "#.#", "#.#" } };
+    static const FontGlyph GL_L = { { "#..", "#..", "#..", "#..", "###" } };
+    static const FontGlyph GL_M = { { "#.#", "###", "###", "#.#", "#.#" } };
+    static const FontGlyph GL_N = { { "#.#", "##.", "##.", "#.#", "#.#" } };
+    static const FontGlyph GL_O = { { ".#.", "#.#", "#.#", "#.#", ".#." } };
+    static const FontGlyph GL_P = { { "##.", "#.#", "##.", "#..", "#.." } };
+    static const FontGlyph GL_Q = { { ".#.", "#.#", "#.#", ".#.", "..#" } };
+    static const FontGlyph GL_R = { { "##.", "#.#", "##.", "#.#", "#.#" } };
+    static const FontGlyph GL_S = { { ".##", "#..", ".#.", "..#", "##." } };
+    static const FontGlyph GL_T = { { "###", ".#.", ".#.", ".#.", ".#." } };
+    static const FontGlyph GL_U = { { "#.#", "#.#", "#.#", "#.#", ".#." } };
+    static const FontGlyph GL_V = { { "#.#", "#.#", "#.#", "#.#", ".#." } };
+    static const FontGlyph GL_W = { { "#.#", "#.#", "###", "###", "#.#" } };
+    static const FontGlyph GL_X = { { "#.#", "#.#", ".#.", "#.#", "#.#" } };
+    static const FontGlyph GL_Y = { { "#.#", "#.#", ".#.", ".#.", ".#." } };
+    static const FontGlyph GL_Z = { { "###", "..#", ".#.", "#..", "###" } };
+
+    switch (c)
+    {
+    case 'A': return &GL_A;
+    case 'B': return &GL_B;
+    case 'C': return &GL_C;
+    case 'D': return &GL_D;
+    case 'E': return &GL_E;
+    case 'F': return &GL_F;
+    case 'G': return &GL_G;
+    case 'H': return &GL_H;
+    case 'I': return &GL_I;
+    case 'J': return &GL_J;
+    case 'K': return &GL_K;
+    case 'L': return &GL_L;
+    case 'M': return &GL_M;
+    case 'N': return &GL_N;
+    case 'O': return &GL_O;
+    case 'P': return &GL_P;
+    case 'Q': return &GL_Q;
+    case 'R': return &GL_R;
+    case 'S': return &GL_S;
+    case 'T': return &GL_T;
+    case 'U': return &GL_U;
+    case 'V': return &GL_V;
+    case 'W': return &GL_W;
+    case 'X': return &GL_X;
+    case 'Y': return &GL_Y;
+    case 'Z': return &GL_Z;
+    default:
+        return nullptr;
+    }
+}
+
+struct TextLabel
+{
+    float s = 0.0f;          // position along path
+    std::string text;        // message
+    float size = 1.0f;       // scale of glyph cells
+    Vec3 color = make_vec3(2.0f, 1.8f, 2.1f);
+    Vec3 offset = make_vec3(0.0f, 0.0f, 0.0f); // (right, up, forward)
+};
+
+struct TextOnWires
+{
+    vector<TextLabel> labels;
+
+    void build_example(const TunnelSection& sec)
+    {
+        labels.clear();
+        float L = sec.total_length();
+        if (L <= 0.0f) return;
+
+        // Label 1 – near the beginning
+        {
+            TextLabel lbl{};
+            lbl.s = 0.12f * L;
+            lbl.text = "WIRE ENGINE";
+            lbl.size = 2.4f;
+            lbl.color = make_vec3(1.9f, 1.7f, 2.2f);
+            lbl.offset = make_vec3(sec.radius + 8.0f, 8.0f, 0.0f);
+            labels.push_back(lbl);
+        }
+
+        // Label 2 – in the middle
+        {
+            TextLabel lbl{};
+            lbl.s = 0.5f * L;
+            lbl.text = "COSMOS TUNNEL";
+            lbl.size = 2.6f;
+            lbl.color = make_vec3(1.5f, 1.9f, 2.1f);
+            lbl.offset = make_vec3(-(sec.radius + 10.0f), 12.0f, 0.0f);
+            labels.push_back(lbl);
+        }
+
+        // Label 3 – near the end
+        {
+            TextLabel lbl{};
+            lbl.s = 0.82f * L;
+            lbl.text = "LIGHT PAINTING";
+            lbl.size = 2.2f;
+            lbl.color = make_vec3(2.1f, 1.6f, 1.9f);
+            lbl.offset = make_vec3(0.0f, sec.radius + 15.0f, 0.0f);
+            labels.push_back(lbl);
+        }
+    }
+
+    void draw_range(LineEmitContext& ctx,
+        const TunnelSection& sec,
+        float s_start, float s_end,
+        float t) const
+    {
+        (void)t; // used only for flicker; we use it inside
+
+        if (labels.empty()) return;
+        float L = sec.total_length();
+        if (L <= 0.0f) return;
+
+        float s_lo = (s_start < 0.0f) ? 0.0f : s_start;
+        float s_hi = (s_end > L) ? L : s_end;
+        if (s_hi <= s_lo) return;
+
+        const float cellBase = 1.0f;       // base cell size
+        const float glyphWCells = 3.0f;    // 3 columns
+        const float glyphHCells = 5.0f;    // 5 rows
+        const float gapCells = 1.0f;       // one empty column between chars
+        const float advanceCells = glyphWCells + gapCells;
+
+        for (const TextLabel& lab : labels)
+        {
+            if (lab.s < s_lo || lab.s > s_hi) continue;
+            if (lab.text.empty()) continue;
+
+            PathFrame frame = make_path_frame(sec, lab.s);
+
+            Vec3 base =
+                frame.pos +
+                frame.right * lab.offset.x +
+                frame.up * lab.offset.y +
+                frame.forward * lab.offset.z;
+
+            int n = (int)lab.text.size();
+            float totalWidthCells = (float)n * advanceCells - gapCells;
+            float totalHeightCells = glyphHCells;
+
+            float halfW = 0.5f * totalWidthCells * cellBase * lab.size;
+            float halfH = 0.5f * totalHeightCells * cellBase * lab.size;
+
+            // Center text around base in the (right, up) plane
+            Vec3 origin = base - frame.right * halfW - frame.up * halfH;
+
+            for (int idx = 0; idx < n; ++idx)
+            {
+                char c = lab.text[(size_t)idx];
+                if (c == ' ') continue;
+
+                const FontGlyph* glyph = get_font_glyph(c);
+                if (!glyph) continue;
+
+                float charOffsetCells = (float)idx * advanceCells;
+
+                for (int row = 0; row < 5; ++row)
+                {
+                    for (int col = 0; col < 3; ++col)
+                    {
+                        char pixel = glyph->rows[row][col];
+                        if (pixel != '#') continue;
+
+                        float x0 = (charOffsetCells + (float)col) * cellBase * lab.size;
+                        float x1 = (charOffsetCells + (float)col + 1.0f) * cellBase * lab.size;
+                        float y0 = ((float)row) * cellBase * lab.size;
+                        float y1 = ((float)row + 1.0f) * cellBase * lab.size;
+
+                        Vec3 p00 = origin + frame.right * x0 + frame.up * y0;
+                        Vec3 p10 = origin + frame.right * x1 + frame.up * y0;
+                        Vec3 p11 = origin + frame.right * x1 + frame.up * y1;
+                        Vec3 p01 = origin + frame.right * x0 + frame.up * y1;
+
+                        float flicker = 0.75f + 0.25f *
+                            std::sin(t * 2.0f + 0.7f * (float)(row + col + idx));
+
+                        Vec3 colr = lab.color * flicker;
+                        float thick = 0.10f * lab.size;
+                        float inten = 200.0f * flicker;
+
+                        emit_line(ctx, p00, p10, colr, thick, inten);
+                        emit_line(ctx, p10, p11, colr, thick, inten);
+                        emit_line(ctx, p11, p01, colr, thick, inten);
+                        emit_line(ctx, p01, p00, colr, thick, inten);
+                    }
+                }
+            }
+        }
+    }
+};
+
+// -----------------------------------------------------------------------------
 // Sections + effect system
 // -----------------------------------------------------------------------------
 enum class SectionKind
@@ -818,6 +1037,7 @@ void effect_energy(LineEmitContext&, const SectionContext&, float, void*);
 void effect_geo(LineEmitContext&, const SectionContext&, float, void*);
 void effect_ring_field(LineEmitContext&, const SectionContext&, float, void*);
 void effect_world_box(LineEmitContext&, const SectionContext&, float, void*);
+void effect_tunnel_text(LineEmitContext&, const SectionContext&, float, void*);
 
 // -----------------------------------------------------------------------------
 // Universe – world container
@@ -830,6 +1050,7 @@ struct Universe
     EnergyFlow            energy{};
     TunnelSurfacePainter  surfacePainter{};
     GeoSet                geo{};
+    TextOnWires           text{};   // NEW: text on wires
 
     vector<Section>       sections;
 
@@ -856,6 +1077,8 @@ struct Universe
         camera.inside_mode = true;
         camera.fly_speed = 40.0f;
         camera.fov_inside = 75.0f;
+        camera.cam_back_offset = 20.0f;
+        camera.look_ahead_dist = 80.0f;
 
         // 4) Energy + surface painter tweaks
         energy.pulse_count = 9;
@@ -865,7 +1088,10 @@ struct Universe
         // 5) Geo objects outside tunnel
         geo.build_example(tunnel.section);
 
-        // 6) Sections along the path
+        // 6) Text labels on wires
+        text.build_example(tunnel.section);
+
+        // 7) Sections along the path
         float L = tunnel.section.total_length();
         if (L <= 0.0f)
         {
@@ -897,18 +1123,20 @@ struct Universe
             sections.push_back(s5);
         }
 
-        // 7) Register effects
+        // 8) Register effects
         // Tunnel sections
         {
             Effect e1; e1.fn = effect_tunnel_geometry; e1.user = this;
             Effect e2; e2.fn = effect_tunnel_surface; e2.user = this;
             Effect e3; e3.fn = effect_energy;         e3.user = this;
             Effect e4; e4.fn = effect_geo;            e4.user = this;
+            Effect e5; e5.fn = effect_tunnel_text;    e5.user = this; // NEW
 
             tunnelEffects.push_back(e1);
             tunnelEffects.push_back(e2);
             tunnelEffects.push_back(e3);
             tunnelEffects.push_back(e4);
+            tunnelEffects.push_back(e5);
         }
 
         // Empty sections – mainly external geo
@@ -940,7 +1168,6 @@ struct Universe
 void camera_callback(int frame, float t, CameraParams& cam)
 {
     (void)frame;
-    const float twoPi = 6.2831853f;
 
     auto* uni = static_cast<Universe*>(cam.user_ptr);
 
@@ -962,27 +1189,22 @@ void camera_callback(int frame, float t, CameraParams& cam)
         float totalLen = sec.total_length();
         if (totalLen <= 0.0f) totalLen = 1.0f;
 
-        float sCam = std::fmod(t * cr.fly_speed, totalLen);
-        if (sCam < 0.0f) sCam += totalLen;
+        // Distance along the tunnel
+        float sCenter = std::fmod(t * cr.fly_speed, totalLen);
+        if (sCenter < 0.0f) sCenter += totalLen;
 
-        float lookAheadDist = 40.0f;
-        float sAhead = sCam + lookAheadDist;
+        // Build local frame at the camera's center position
+        PathFrame frame = make_path_frame(sec, sCenter);
+
+        // Eye is slightly behind center along -forward (prevents "wall collisions")
+        Vec3 eye = frame.pos - frame.forward * cr.cam_back_offset;
+
+        // Look-ahead point along the path
+        float sAhead = sCenter + cr.look_ahead_dist;
         if (sAhead > totalLen) sAhead = totalLen;
-
-        Vec3 eye = sec.center_along(sCam);
         Vec3 target = sec.center_along(sAhead);
 
-        Vec3 forward = target - eye;
-        float fLen = length3(forward);
-        if (fLen < 1.0e-4f) forward = make_vec3(0.0f, 0.0f, 1.0f);
-        else                forward = forward * (1.0f / fLen);
-
-        Vec3 worldUp = make_vec3(0.0f, 1.0f, 0.0f);
-        Vec3 right = cross3(forward, worldUp);
-        float rLen = length3(right);
-        if (rLen < 1.0e-4f) right = make_vec3(1.0f, 0.0f, 0.0f);
-        else                right = right * (1.0f / rLen);
-        Vec3 up = normalize3(cross3(right, forward));
+        Vec3 up = frame.up;
 
         cam.eye_x = eye.x;    cam.eye_y = eye.y;    cam.eye_z = eye.z;
         cam.target_x = target.x; cam.target_y = target.y; cam.target_z = target.z;
@@ -993,6 +1215,8 @@ void camera_callback(int frame, float t, CameraParams& cam)
     }
     else
     {
+        const float twoPi = 6.2831853f;
+
         float centerS = sec.total_length() * 0.5f;
         Vec3  center = sec.center_along(centerS);
 
@@ -1250,12 +1474,26 @@ void effect_world_box(LineEmitContext& ctx,
     }
 }
 
+void effect_tunnel_text(LineEmitContext& ctx,
+    const SectionContext& sctx,
+    float t,
+    void* user)
+{
+    Universe* uni = static_cast<Universe*>(user);
+    if (!uni || !sctx.section || !sctx.tunnelSec) return;
+
+    float s0 = sctx.section->s_start;
+    float s1 = sctx.section->s_end;
+
+    uni->text.draw_range(ctx, *sctx.tunnelSec, s0, s1, t);
+}
+
 // -----------------------------------------------------------------------------
 // Entry
 // -----------------------------------------------------------------------------
 int main()
 {
-    std::cout << "example_tunnel_world_sections\n";
+    std::cout << "example_tunnel_world_sections_text\n";
     std::cout << "This code is in file: " << __FILE__ << "\n";
 
     const std::string uniqueName = WIRE_UNIQUE_NAME(g_base_output_filepath);
@@ -1263,7 +1501,7 @@ int main()
     std::cout << "Output path: " << g_base_output_filepath
         << "/" << uniqueName << ".mp4\n";
 
-    RenderSettings settings = init_render_settings(uniqueName, 4);
+    RenderSettings settings = init_render_settings(uniqueName, 60);
 
     Universe universe{};
 
