@@ -152,19 +152,38 @@ void line(LineEmitContext& ctx,
 // -----------------------------------------------------------------------------
 // Build a simple hex-tunnel from rings + connectors
 // -----------------------------------------------------------------------------
-void draw_debug_tunnel(LineEmitContext& ctx)
+// -----------------------------------------------------------------------------
+// Build a simple hex-tunnel from rings + connectors, with a gentle bend
+// -----------------------------------------------------------------------------
+void draw_debug_tunnel(LineEmitContext& ctx, float t)
 {
     const float twoPi = 6.2831853f;
     const float angleOffset = twoPi * 0.5f / TUNNEL_SEGMENTS; // flat top/bottom
 
     auto ring_vertex = [&](int ringIdx, int segIdx) -> glm::vec3
         {
-            float z = ringIdx * TUNNEL_SPACING;
-            float a = twoPi * (float)segIdx / (float)TUNNEL_SEGMENTS + angleOffset;
+            // Base "distance along the tunnel"
+            float baseZ = ringIdx * TUNNEL_SPACING;
 
-            float x = std::cos(a) * TUNNEL_RADIUS;
-            float y = std::sin(a) * TUNNEL_RADIUS;
-            return glm::vec3(x, y, z);
+            // --- Bend the tunnel in X/Y as we go along Z ---
+            float bendPhase = baseZ * 0.03f + t * 0.6f;
+
+            // How far we bend sideways
+            float offsetX = std::sin(bendPhase) * 30.0f;   // 30 units left/right
+            float offsetY = std::cos(bendPhase * 0.8f) * 10.0f; // 10 units up/down
+
+            glm::vec3 center(offsetX, offsetY, baseZ);
+
+            // Slight radius breathing so the tunnel feels alive
+            float radius = TUNNEL_RADIUS *
+                (1.0f + 0.12f * std::sin(baseZ * 0.05f + t * 0.9f));
+
+            // Local hex vertex around this bent center
+            float a = twoPi * (float)segIdx / (float)TUNNEL_SEGMENTS + angleOffset;
+            float x = std::cos(a) * radius;
+            float y = std::sin(a) * radius;
+
+            return center + glm::vec3(x, y, 0.0f);
         };
 
     // Colors similar to your reference: blue frames, magenta connectors
@@ -197,13 +216,14 @@ void draw_debug_tunnel(LineEmitContext& ctx)
     }
 }
 
+
 // -----------------------------------------------------------------------------
 // Line callback – just draw the static tunnel
 // -----------------------------------------------------------------------------
 void line_push_callback(int frame, float t, LineEmitContext& ctx)
 {
     (void)frame; (void)t;
-    draw_debug_tunnel(ctx);
+    draw_debug_tunnel(ctx, t);
     ctx.flush_now();
 }
 
@@ -220,7 +240,7 @@ int main()
     std::cout << "Output path: " << g_base_output_filepath
         << "/" << uniqueName << ".mp4\n";
 
-    RenderSettings settings = init_render_settings(uniqueName, 1);
+    RenderSettings settings = init_render_settings(uniqueName, 4);
 
     renderSequencePush(
         settings,
