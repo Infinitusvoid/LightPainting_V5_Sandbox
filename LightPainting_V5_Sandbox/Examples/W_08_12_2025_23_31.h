@@ -1,7 +1,15 @@
 #pragma once
 
 #include "WireUtil.h"
+
+
+#include <fstream>
+#include <cstdint>
+
 #include <cctype> // for std::toupper
+
+#include "../External_libs/tinyply-master/tinyply-master/source/tinyply.h" // adjust path if needed
+#include "../External_libs/tinyply-master/tinyply-master/source/tinyply.cpp" // adjust path if needed
 
 using namespace WireEngine;
 using std::vector;
@@ -1568,8 +1576,340 @@ void effect_tunnel_text(LineEmitContext& ctx,
 }
 
 // -----------------------------------------------------------------------------
-// Entry
+// Debug export: collect tunnel + text lines into a simple array
 // -----------------------------------------------------------------------------
+
+struct ExportLine
+{
+    Vec3 a;
+    Vec3 b;
+    Vec3 color;
+};
+
+// Simple float->u8 color conversion with a bit of exposure
+inline std::uint8_t to_u8_color(float c, float exposure = 0.6f)
+{
+    float v = c * exposure * 255.0f;
+    if (v < 0.0f)  v = 0.0f;
+    if (v > 255.0f) v = 255.0f;
+    return static_cast<std::uint8_t>(v);
+}
+
+// Collect static tunnel geometry (rings + bars + core) for one Tunnel section
+void collect_tunnel_section_lines(const Universe& uni,
+    const Section& secDef,
+    std::vector<ExportLine>& out)
+{
+    if (secDef.kind != SectionKind::Tunnel) return;
+
+    const TunnelSection& sec = uni.tunnel.section;
+    float L = sec.total_length();
+    if (L <= 0.0f) return;
+
+    const int rings = sec.rings;
+    const int segments = sec.segments;
+    if (rings < 2 || segments < 3) return;
+
+    float s_start = secDef.s_start;
+    float s_end = secDef.s_end;
+
+    float s_lo = (s_start < 0.0f) ? 0.0f : s_start;
+    float s_hi = (s_end > L) ? L : s_end;
+    if (s_hi <= s_lo) return;
+
+    float invLenLocal = 1.0f / (s_hi - s_lo);
+
+    // 1) Ring frames
+    for (int r = 0; r < rings; ++r)
+    {
+        float s = sec.s_for_ring(r);
+        if (s < s_lo || s > s_hi) continue;
+
+        float localFrac = (s - s_lo) * invLenLocal; // 0..1
+        float fade = 0.4f + 0.6f * (1.0f - localFrac);
+        Vec3 col = uni.tunnel.frameColor * fade;
+
+        for (int sIdx = 0; sIdx < segments; ++sIdx)
+        {
+            int sn = (sIdx + 1) % segments;
+
+            Vec3 a = sec.ring_vertex(r, sIdx);
+            Vec3 b = sec.ring_vertex(r, sn);
+
+            out.push_back(ExportLine{ a, b, col });
+        }
+    }
+
+    // 2) Longitudinal bars
+    for (int r = 0; r < rings - 1; ++r)
+    {
+        float s0 = sec.s_for_ring(r);
+        float s1 = sec.s_for_ring(r + 1);
+
+        if ((s0 < s_lo && s1 < s_lo) ||
+            (s0 > s_hi && s1 > s_hi))
+            continue;
+
+        float sMid = 0.5f * (s0 + s1);
+        float localFrac = (sMid - s_lo) * invLenLocal;
+        if (localFrac < 0.0f) localFrac = 0.0f;
+        if (localFrac > 1.0f) localFrac = 1.0f;
+
+        float fade = 0.5f + 0.5f * (1.0f - localFrac);
+        Vec3 col = uni.tunnel.barColor * fade;
+
+        for (int sIdx = 0; sIdx < segments; ++sIdx)
+        {
+            Vec3 a = sec.ring_vertex(r, sIdx);
+            Vec3 b = sec.ring_vertex(r + 1, sIdx);
+
+            out.push_back(ExportLine{ a, b, col });
+        }
+    }
+
+    // 3) Core line (static, no time-based pulse)
+    if (uni.tunnel.draw_core)
+    {
+        int coreSegs = sec.rings * 3;
+        for (int i = 0; i < coreSegs - 1; ++i)
+        {
+            float u0 = (float)i / (float)(coreSegs - 1);
+            float u1 = (float)(i + 1) / (float)(coreSegs - 1);
+
+            float s0 = u0 * L;
+            float s1 = u1 * L;
+
+            if ((s0 < s_lo && s1 < s_lo) ||
+                (s0 > s_hi && s1 > s_hi))
+                continue;
+
+            if (s0 < s_lo) s0 = s_lo;
+            if (s1 > s_hi) s1 = s_hi;
+
+            Vec3 c0 = sec.center_along(s0);
+            Vec3 c1 = sec.center_along(s1);
+
+            Vec3 col = uni.tunnel.coreColor; // no animation, just base color
+            out.push_back(ExportLine{ c0, c1, col });
+        }
+    }
+}
+
+// Collect all text labels as line segments (no flicker, static colors)
+void collect_text_lines(const Universe& uni,
+    std::vector<ExportLine>& out)
+{
+    const TunnelSection& sec = uni.tunnel.section;
+    const TextOnWires& text = uni.text;
+
+    float L = sec.total_length();
+    if (L <= 0.0f) return;
+    if (text.labels.empty()) return;
+
+    // Must match the constants used in TextOnWires::draw_range
+    const float cellBase = 1.5f;
+    const float glyphWCells = 3.0f;
+    const float glyphHCells = 5.0f;
+    const float gapCells = 1.0f;
+    const float advanceCells = glyphWCells + gapCells;
+
+    for (const TextLabel& lab : text.labels)
+    {
+        if (lab.text.empty()) continue;
+
+        PathFrame frame = make_path_frame(sec, lab.s);
+
+        Vec3 base =
+            frame.pos +
+            frame.right * lab.offset.x +
+            frame.up * lab.offset.y +
+            frame.forward * lab.offset.z;
+
+        int   n = (int)lab.text.size();
+        float totalWidthCells = (float)n * advanceCells - gapCells;
+        float totalHeightCells = glyphHCells;
+
+        float halfW = 0.5f * totalWidthCells * cellBase * lab.size;
+        float halfH = 0.5f * totalHeightCells * cellBase * lab.size;
+
+        // Center text around base in the (right, up) plane
+        Vec3 origin = base - frame.right * halfW - frame.up * halfH;
+
+        for (int idx = 0; idx < n; ++idx)
+        {
+            char c = lab.text[(size_t)idx];
+            if (c == ' ') continue;
+
+            const FontGlyph* glyph = get_font_glyph(c);
+            if (!glyph) continue;
+
+            float charOffsetCells = (float)idx * advanceCells;
+
+            for (int row = 0; row < 5; ++row)
+            {
+                for (int col = 0; col < 3; ++col)
+                {
+                    char pixel = glyph->rows[row][col];
+                    if (pixel != '#') continue;
+
+                    float x0 = (charOffsetCells + (float)col) * cellBase * lab.size;
+                    float x1 = (charOffsetCells + (float)col + 1.0f) * cellBase * lab.size;
+                    float y0 = ((float)row) * cellBase * lab.size;
+                    float y1 = ((float)row + 1.0f) * cellBase * lab.size;
+
+                    Vec3 p00 = origin + frame.right * x0 + frame.up * y0;
+                    Vec3 p10 = origin + frame.right * x1 + frame.up * y0;
+                    Vec3 p11 = origin + frame.right * x1 + frame.up * y1;
+                    Vec3 p01 = origin + frame.right * x0 + frame.up * y1;
+
+                    Vec3 colr = lab.color; // no time-based flicker
+
+                    out.push_back(ExportLine{ p00, p10, colr });
+                    out.push_back(ExportLine{ p10, p11, colr });
+                    out.push_back(ExportLine{ p11, p01, colr });
+                    out.push_back(ExportLine{ p01, p00, colr });
+                }
+            }
+        }
+    }
+}
+
+// Aggregate: tunnel geometry for all Tunnel sections + text labels
+void collect_all_tunnel_debug_lines(const Universe& uni,
+    std::vector<ExportLine>& out)
+{
+    out.clear();
+
+    // 1) Tunnel geometry per Tunnel section
+    for (const Section& s : uni.sections)
+    {
+        if (s.kind == SectionKind::Tunnel)
+        {
+            collect_tunnel_section_lines(uni, s, out);
+        }
+    }
+
+    // 2) Text labels along the path
+    collect_text_lines(uni, out);
+
+    std::cout << "Debug collect: " << out.size()
+        << " line segments for tunnel + text\n";
+}
+
+// -----------------------------------------------------------------------------
+// Export collected lines as a PLY (vertices + edges)
+// -----------------------------------------------------------------------------
+void export_tunnel_debug_ply(const Universe& uni,
+    const std::string& baseName)
+{
+    std::vector<ExportLine> lines;
+    collect_all_tunnel_debug_lines(uni, lines);
+
+    if (lines.empty())
+    {
+        std::cout << "No tunnel lines to export for PLY.\n";
+        return;
+    }
+
+    std::vector<float>    vertices; // x,y,z
+    std::vector<std::uint8_t> colors;   // r,g,b
+    std::vector<std::uint32_t> edges;   // vertex indices, [v0,v1, v2,v3, ...]
+
+    vertices.reserve(lines.size() * 2 * 3);
+    colors.reserve(lines.size() * 2 * 3);
+    edges.reserve(lines.size() * 2);
+
+    std::uint32_t currentVertexIndex = 0;
+
+    for (const ExportLine& l : lines)
+    {
+        // Map color to [0,255], reused for both endpoints
+        std::uint8_t r = to_u8_color(l.color.x);
+        std::uint8_t g = to_u8_color(l.color.y);
+        std::uint8_t b = to_u8_color(l.color.z);
+
+        // Vertex 0
+        vertices.push_back(l.a.x);
+        vertices.push_back(l.a.y);
+        vertices.push_back(l.a.z);
+        colors.push_back(r);
+        colors.push_back(g);
+        colors.push_back(b);
+        std::uint32_t idx0 = currentVertexIndex++;
+
+        // Vertex 1
+        vertices.push_back(l.b.x);
+        vertices.push_back(l.b.y);
+        vertices.push_back(l.b.z);
+        colors.push_back(r);
+        colors.push_back(g);
+        colors.push_back(b);
+        std::uint32_t idx1 = currentVertexIndex++;
+
+        // Edge uses the two vertex indices
+        edges.push_back(idx0);
+        edges.push_back(idx1);
+    }
+
+    const std::string plyPath =
+        g_base_output_filepath + "/" + baseName + "_tunnel_debug.ply";
+
+    try
+    {
+        std::filebuf fb;
+        if (!fb.open(plyPath, std::ios::out | std::ios::binary))
+        {
+            std::cerr << "Failed to open PLY file for writing: "
+                << plyPath << "\n";
+            return;
+        }
+
+        std::ostream outstream(&fb);
+
+        tinyply::PlyFile ply;
+
+        const size_t vertexCount = vertices.size() / 3;
+        const size_t edgeCount = edges.size() / 2;
+
+        // Vertex positions
+        ply.add_properties_to_element("vertex",
+            { "x", "y", "z" },
+            tinyply::Type::FLOAT32,
+            vertexCount,
+            reinterpret_cast<std::uint8_t*>(vertices.data()),
+            tinyply::Type::INVALID, 0);
+
+        // Vertex colors
+        ply.add_properties_to_element("vertex",
+            { "red", "green", "blue" },
+            tinyply::Type::UINT8,
+            vertexCount,
+            reinterpret_cast<std::uint8_t*>(colors.data()),
+            tinyply::Type::INVALID, 0);
+
+        // Edges: each element has properties vertex1, vertex2 (INT32)
+        ply.add_properties_to_element("edge",
+            { "vertex1", "vertex2" },
+            tinyply::Type::INT32,
+            edgeCount,
+            reinterpret_cast<std::uint8_t*>(edges.data()),
+            tinyply::Type::INVALID, 0);
+
+        ply.get_comments().push_back("WireEngine tunnel + text debug export");
+
+        ply.write(outstream, true);
+
+        std::cout << "Wrote tunnel debug PLY: " << plyPath
+            << "\n  vertices: " << vertexCount
+            << "\n  edges:    " << edgeCount << "\n";
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Exception while writing PLY: " << e.what() << "\n";
+    }
+}
+
+
 int main()
 {
     std::cout << "example_tunnel_world_sections_text\n";
@@ -1580,10 +1920,13 @@ int main()
     std::cout << "Output path: " << g_base_output_filepath
         << "/" << uniqueName << ".mp4\n";
 
-    // Short test (1 second of flight) – bump to 4 or more when you're happy
-    RenderSettings settings = init_render_settings(uniqueName, 60);
+    RenderSettings settings = init_render_settings(uniqueName, 1);
 
     Universe universe{};
+
+    // <<< NEW: export static tunnel + text geometry for Blender debug
+    export_tunnel_debug_ply(universe, uniqueName);
+    // >>>
 
     renderSequencePush(
         settings,
