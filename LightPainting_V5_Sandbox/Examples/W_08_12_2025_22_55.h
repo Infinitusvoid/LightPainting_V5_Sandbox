@@ -28,8 +28,9 @@ RenderSettings init_render_settings(const std::string& baseName,
     // Additive neon
     s.line_blend_mode = LineBlendMode::AdditiveLightPainting;
 
-    // Simple tone; bloom OFF for clean debug
-    s.exposure = 1.5f * 10.0f;
+    // Simple tone; base exposure – you can tune this, now the scene
+    // is bright enough that you don't *need* x10
+    s.exposure = 2.5f * 10.0f;
     s.bloom_enabled = false;
     s.bloom_threshold = 10.0f;
     s.bloom_strength = 0.0f;
@@ -130,7 +131,7 @@ struct FlightPath
                 randomSteer = randomSteer * (1.0f / rsLen);
 
             float wanderStrength = 0.6f;
-            Vec3 forwardBias = make_vec3(0.0f, 0.0f, 1.0f);
+            Vec3  forwardBias = make_vec3(0.0f, 0.0f, 1.0f);
 
             // Boundary push to keep us inside [-box_half, box_half]^3
             Vec3 boundaryPush = make_vec3(0.0f, 0.0f, 0.0f);
@@ -245,7 +246,7 @@ struct TunnelSection
     const FlightPath* path = nullptr;
 
     int   segments = 6;    // hexagon
-    int   rings = 80;      // how many cross-sections
+    int   rings = 80;   // how many cross-sections
     float radius = 40.0f;
 
     float length_used = 0.0f; // path length actually used
@@ -292,7 +293,7 @@ struct TunnelSection
         if (!path)
             return make_vec3(0.0f, 0.0f, s);
 
-        if (s < 0.0f)      s = 0.0f;
+        if (s < 0.0f)        s = 0.0f;
         if (s > length_used) s = length_used;
         return path->sample_at(s);
     }
@@ -382,10 +383,10 @@ struct Tunnel
 {
     TunnelSection section{};
 
-    // Colors inspired by your reference
+    // Colors
     Vec3 frameColor = make_vec3(0.25f, 0.55f, 1.6f) * 2.0f;   // ring frames
-    Vec3 barColor = make_vec3(1.6f, 0.4f, 1.6f) * 2.0f;       // longitudinal bars
-    Vec3 coreColor = make_vec3(1.4f, 1.2f, 1.8f) * 2.0f;      // central core
+    Vec3 barColor = make_vec3(1.6f, 0.4f, 1.6f) * 2.0f;     // longitudinal bars
+    Vec3 coreColor = make_vec3(1.4f, 1.2f, 1.8f) * 2.0f;     // central core
 
     bool draw_core = true;
 
@@ -484,7 +485,6 @@ struct Tunnel
                 Vec3 c0 = section.center_along(s0);
                 Vec3 c1 = section.center_along(s1);
 
-                // Use localFrac from s0 for a bit of motion
                 float localFrac = (s0 - s_lo) * invLenLocal;
                 if (localFrac < 0.0f) localFrac = 0.0f;
                 if (localFrac > 1.0f) localFrac = 1.0f;
@@ -576,8 +576,8 @@ struct TunnelSurfacePainter
         float s_start, float s_end,
         float t) const
     {
-        int rings = sec.rings;
-        int segs = sec.segments;
+        int   rings = sec.rings;
+        int   segs = sec.segments;
         float L = sec.total_length();
         if (rings < 2 || segs < 3 || L <= 0.0f) return;
         if (s_end <= s_start) return;
@@ -726,7 +726,7 @@ struct GeoSet
                 Vec3 pBL = anchor - rightScaled - upScaled;
 
                 float thick = 0.25f;
-                float inten = 150.0f;
+                float inten = 120.0f; // slightly dimmer to let text stand out
 
                 emit_line(ctx, pTL, pTR, inst.color, thick, inten);
                 emit_line(ctx, pTR, pBR, inst.color, thick, inten);
@@ -755,7 +755,7 @@ struct GeoSet
                 Vec3 c111 = anchor + ex + ey + ez;
 
                 float thick = 0.18f;
-                float inten = 120.0f;
+                float inten = 100.0f;
                 Vec3 col = inst.color * 0.9f;
 
                 auto edge = [&](const Vec3& a, const Vec3& b)
@@ -790,7 +790,7 @@ inline const FontGlyph* get_font_glyph(char c)
     unsigned char uc = (unsigned char)c;
     c = (char)std::toupper(uc);
 
-    // Define a small 3x5 stroke font for A–Z
+    // 3x5 stroke font for A–Z
     static const FontGlyph GL_A = { { ".#.", "#.#", "###", "#.#", "#.#" } };
     static const FontGlyph GL_B = { { "##.", "#.#", "##.", "#.#", "##." } };
     static const FontGlyph GL_C = { { ".##", "#..", "#..", "#..", ".##" } };
@@ -846,18 +846,17 @@ inline const FontGlyph* get_font_glyph(char c)
     case 'X': return &GL_X;
     case 'Y': return &GL_Y;
     case 'Z': return &GL_Z;
-    default:
-        return nullptr;
+    default:  return nullptr;
     }
 }
 
 struct TextLabel
 {
-    float s = 0.0f;          // position along path
-    std::string text;        // message
-    float size = 1.0f;       // scale of glyph cells
-    Vec3 color = make_vec3(2.0f, 1.8f, 2.1f);
-    Vec3 offset = make_vec3(0.0f, 0.0f, 0.0f); // (right, up, forward)
+    float       s = 0.0f;          // position along path
+    std::string text;                  // message
+    float       size = 100.0f;         // scale of glyph cells
+    Vec3        color = make_vec3(2.0f, 1.8f, 2.1f);
+    Vec3        offset = make_vec3(0.0f, 0.0f, 0.0f); // (right, up, forward)
 };
 
 struct TextOnWires
@@ -870,36 +869,51 @@ struct TextOnWires
         float L = sec.total_length();
         if (L <= 0.0f) return;
 
-        // Label 1 – near the beginning
+        // DEBUG / HERO LABEL – big, inside the tunnel, early
         {
             TextLabel lbl{};
-            lbl.s = 0.12f * L;
+            lbl.s = 0.15f * L;              // in first Tunnel section [0, 0.25L]
+            lbl.text = "HELLO COSMOS";
+            lbl.size = 4.0f;                   // big
+            lbl.color = make_vec3(2.6f, 2.3f, 2.9f);
+            // hover above the center line
+            lbl.offset = make_vec3(0.0f, sec.radius * 0.25f, 0.0f);
+            labels.push_back(lbl);
+        }
+
+        // Label 1 – side of tunnel, still large
+        {
+            TextLabel lbl{};
+            lbl.s = 0.12f * L;              // also in first tunnel segment
             lbl.text = "WIRE ENGINE";
-            lbl.size = 2.4f;
-            lbl.color = make_vec3(1.9f, 1.7f, 2.2f);
-            lbl.offset = make_vec3(sec.radius + 8.0f, 8.0f, 0.0f);
+            lbl.size = 3.0f * 10.0;
+            lbl.color = make_vec3(2.2f, 2.0f, 2.5f);
+            // slightly to the right and up
+            lbl.offset = make_vec3(sec.radius * 0.5f, sec.radius * 0.15f, 0.0f);
             labels.push_back(lbl);
         }
 
-        // Label 2 – in the middle
+        // Label 2 – mid tunnel
         {
             TextLabel lbl{};
-            lbl.s = 0.5f * L;
+            lbl.s = 0.55f * L;              // in third Tunnel section [0.45L, 0.70L]
             lbl.text = "COSMOS TUNNEL";
-            lbl.size = 2.6f;
-            lbl.color = make_vec3(1.5f, 1.9f, 2.1f);
-            lbl.offset = make_vec3(-(sec.radius + 10.0f), 12.0f, 0.0f);
+            lbl.size = 3.2f * 10.0;
+            lbl.color = make_vec3(1.9f, 2.2f, 2.4f);
+            // to the left, mid-height
+            lbl.offset = make_vec3(-sec.radius * 0.6f, sec.radius * 0.1f, 0.0f);
             labels.push_back(lbl);
         }
 
-        // Label 3 – near the end
+        // Label 3 – near the end, overhead
         {
             TextLabel lbl{};
-            lbl.s = 0.82f * L;
+            // IMPORTANT: make sure it's in the last Tunnel section [0.90L, L]
+            lbl.s = 0.93f * L;
             lbl.text = "LIGHT PAINTING";
-            lbl.size = 2.2f;
-            lbl.color = make_vec3(2.1f, 1.6f, 1.9f);
-            lbl.offset = make_vec3(0.0f, sec.radius + 15.0f, 0.0f);
+            lbl.size = 3.0f * 10.0;
+            lbl.color = make_vec3(2.5f, 2.0f, 2.1f);
+            lbl.offset = make_vec3(0.0f, sec.radius * 0.4f, 0.0f);
             labels.push_back(lbl);
         }
     }
@@ -909,8 +923,6 @@ struct TextOnWires
         float s_start, float s_end,
         float t) const
     {
-        (void)t; // used only for flicker; we use it inside
-
         if (labels.empty()) return;
         float L = sec.total_length();
         if (L <= 0.0f) return;
@@ -919,10 +931,11 @@ struct TextOnWires
         float s_hi = (s_end > L) ? L : s_end;
         if (s_hi <= s_lo) return;
 
-        const float cellBase = 1.0f;       // base cell size
-        const float glyphWCells = 3.0f;    // 3 columns
-        const float glyphHCells = 5.0f;    // 5 rows
-        const float gapCells = 1.0f;       // one empty column between chars
+        // Bigger glyph cells so letters read more clearly
+        const float cellBase = 1.5f;
+        const float glyphWCells = 3.0f;
+        const float glyphHCells = 5.0f;
+        const float gapCells = 1.0f;
         const float advanceCells = glyphWCells + gapCells;
 
         for (const TextLabel& lab : labels)
@@ -938,7 +951,7 @@ struct TextOnWires
                 frame.up * lab.offset.y +
                 frame.forward * lab.offset.z;
 
-            int n = (int)lab.text.size();
+            int   n = (int)lab.text.size();
             float totalWidthCells = (float)n * advanceCells - gapCells;
             float totalHeightCells = glyphHCells;
 
@@ -979,8 +992,8 @@ struct TextOnWires
                             std::sin(t * 2.0f + 0.7f * (float)(row + col + idx));
 
                         Vec3 colr = lab.color * flicker;
-                        float thick = 0.10f * lab.size;
-                        float inten = 200.0f * flicker;
+                        float thick = 0.30f * lab.size;          // THICK strokes
+                        float inten = 2000.0f * flicker;         // VERY bright
 
                         emit_line(ctx, p00, p10, colr, thick, inten);
                         emit_line(ctx, p10, p11, colr, thick, inten);
@@ -1005,8 +1018,8 @@ enum class SectionKind
 
 struct Section
 {
-    float s_start = 0.0f;
-    float s_end = 0.0f;
+    float      s_start = 0.0f;
+    float      s_end = 0.0f;
     SectionKind kind = SectionKind::Tunnel;
 };
 
@@ -1044,20 +1057,20 @@ void effect_tunnel_text(LineEmitContext&, const SectionContext&, float, void*);
 // -----------------------------------------------------------------------------
 struct Universe
 {
-    FlightPath            path{};
-    CameraRig             camera{};
-    Tunnel                tunnel{};
-    EnergyFlow            energy{};
-    TunnelSurfacePainter  surfacePainter{};
-    GeoSet                geo{};
-    TextOnWires           text{};   // NEW: text on wires
+    FlightPath           path{};
+    CameraRig            camera{};
+    Tunnel               tunnel{};
+    EnergyFlow           energy{};
+    TunnelSurfacePainter surfacePainter{};
+    GeoSet               geo{};
+    TextOnWires          text{};   // text on wires
 
-    vector<Section>       sections;
+    vector<Section>      sections;
 
-    vector<Effect>        tunnelEffects;
-    vector<Effect>        emptyEffects;
-    vector<Effect>        ringFieldEffects;
-    vector<Effect>        worldEffects;  // always-on (e.g. world box)
+    vector<Effect>       tunnelEffects;
+    vector<Effect>       emptyEffects;
+    vector<Effect>       ringFieldEffects;
+    vector<Effect>       worldEffects;  // always-on (e.g. world box)
 
     Universe()
     {
@@ -1127,10 +1140,10 @@ struct Universe
         // Tunnel sections
         {
             Effect e1; e1.fn = effect_tunnel_geometry; e1.user = this;
-            Effect e2; e2.fn = effect_tunnel_surface; e2.user = this;
-            Effect e3; e3.fn = effect_energy;         e3.user = this;
-            Effect e4; e4.fn = effect_geo;            e4.user = this;
-            Effect e5; e5.fn = effect_tunnel_text;    e5.user = this; // NEW
+            Effect e2; e2.fn = effect_tunnel_surface;  e2.user = this;
+            Effect e3; e3.fn = effect_energy;          e3.user = this;
+            Effect e4; e4.fn = effect_geo;             e4.user = this;
+            Effect e5; e5.fn = effect_tunnel_text;     e5.user = this;
 
             tunnelEffects.push_back(e1);
             tunnelEffects.push_back(e2);
@@ -1376,7 +1389,7 @@ void effect_ring_field(LineEmitContext& ctx,
     float s_hi = (s1 > L) ? L : s1;
     if (s_hi <= s_lo) return;
 
-    int ringCount = 10;
+    int         ringCount = 10;
     const float twoPi = 6.2831853f;
 
     for (int i = 0; i < ringCount; ++i)
@@ -1387,7 +1400,7 @@ void effect_ring_field(LineEmitContext& ctx,
         PathFrame frame = make_path_frame(sec, s);
 
         float bigR = sec.radius * (3.0f + 0.8f * std::sin(t * 0.4f + u * 4.0f));
-        int segments = 40;
+        int   segments = 40;
 
         Vec3 baseCol = make_vec3(0.35f, 0.7f, 1.6f);
         float pulse = 0.6f + 0.4f * std::sin(t * 0.7f + u * 6.0f);
@@ -1440,9 +1453,9 @@ void effect_world_box(LineEmitContext& ctx,
     Vec3 c110 = make_vec3(h, h, -h);
     Vec3 c111 = make_vec3(h, h, h);
 
-    Vec3 col = make_vec3(0.18f, 0.26f, 0.5f);
-    float thick = 0.12f;
-    float inten = 70.0f;
+    Vec3  col = make_vec3(0.18f, 0.26f, 0.5f);
+    float thick = 0.10f;
+    float inten = 50.0f;   // dimmer so tunnel & text dominate
 
     auto edge = [&](const Vec3& a, const Vec3& b)
         {
@@ -1501,7 +1514,8 @@ int main()
     std::cout << "Output path: " << g_base_output_filepath
         << "/" << uniqueName << ".mp4\n";
 
-    RenderSettings settings = init_render_settings(uniqueName, 60);
+    // 60 seconds of flight
+    RenderSettings settings = init_render_settings(uniqueName, 1);
 
     Universe universe{};
 
