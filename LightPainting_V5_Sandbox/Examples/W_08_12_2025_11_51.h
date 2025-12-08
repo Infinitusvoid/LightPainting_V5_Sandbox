@@ -42,6 +42,8 @@
 // VLC wrapper you already use
 #include "../External_libs/My/VLC/VLC.h"
 
+#include "WireExampleUtils.h"
+
 using namespace WireEngine;
 namespace fs = std::filesystem;
 using json = nlohmann::json;
@@ -70,65 +72,6 @@ namespace Random
     {
         static std::uniform_real_distribution<float> dist(-1.0f, 1.0f);
         return dist(get_engine());
-    }
-}
-
-// -----------------------------------------------------------------------------
-// Unique name generator (your code, slightly formatted)
-// -----------------------------------------------------------------------------
-namespace Utils
-{
-    inline std::string generate_unique_name()
-    {
-        // 1) Base name from this source file path (__FILE__)
-        std::string fullPath = __FILE__;
-        std::string filename = fullPath;
-
-        // Strip directory
-        std::size_t pos = filename.find_last_of("/\\");
-        if (pos != std::string::npos)
-            filename = filename.substr(pos + 1);
-
-        // Strip extension
-        std::size_t dotPos = filename.find_last_of('.');
-        if (dotPos != std::string::npos)
-            filename = filename.substr(0, dotPos);
-
-        const std::string baseName = filename;
-
-        // 2) Where videos live
-        fs::path outDir = g_base_output_filepath;
-
-        // Ensure directory exists (safe to call even if it already exists)
-        if (!fs::exists(outDir))
-        {
-            std::error_code ec;
-            fs::create_directories(outDir, ec);
-            if (ec)
-            {
-                std::cerr << "generate_unique_name: failed to create output dir: "
-                    << outDir.string() << " (" << ec.message() << ")\n";
-            }
-        }
-
-        // 3) Find first free "<baseName>_V_<n>.mp4"
-        int version = 1;
-        while (true)
-        {
-            std::ostringstream nameStream;
-            nameStream << baseName << "_V_" << version;
-            const std::string candidateName = nameStream.str();
-
-            fs::path candidatePath = outDir / (candidateName + ".mp4");
-
-            if (!fs::exists(candidatePath))
-            {
-                // We return just the name (without path or extension)
-                return candidateName;
-            }
-
-            ++version;
-        }
     }
 }
 
@@ -863,7 +806,7 @@ int main()
     std::cout << "example_lissajous_push\n";
     std::cout << "This code is in file: " << __FILE__ << "\n";
 
-    const std::string uniqueName = Utils::generate_unique_name();
+    const std::string uniqueName = WIRE_UNIQUE_NAME(g_base_output_filepath);
     std::cout << "Video name: " << uniqueName << "\n";
     std::cout << "Output path: " << g_base_output_filepath
         << "/" << uniqueName << ".mp4\n";
