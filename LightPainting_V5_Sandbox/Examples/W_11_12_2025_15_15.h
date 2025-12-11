@@ -155,7 +155,7 @@ struct Circular_system
 
                 for (int n = 0; n < 200; n++)
                 {
-                    float radius = 1.0 + 1.0f * j + Random::random_signed() * 0.1f;
+                    float radius = 1.0 + 1.0f * j + Random::random_signed() * 0.017f;
                     float vertical_offset = Random::random_signed() * 0.2f;
 
                     float angle_0 = i * step_size;
@@ -253,6 +253,72 @@ struct Axis
 };
 
 // -----------------------------------------------------------------------------
+// Unit_box – a simple wireframe cube, centered at the origin
+//   - Used as a reference "size unit" in the scene.
+//   - By default it's 1×1×1, from -0.5 to +0.5 on each axis.
+// -----------------------------------------------------------------------------
+struct Unit_box
+{
+    float edge_length = 1.0f;   // total size of the cube
+    float thickness = 0.01f;  // line thickness
+    float intensity = 10.0f;   // brightness of the lines
+
+    void draw(LineEmitContext& ctx) const
+    {
+        LineParams line{};
+        line.thickness = thickness;
+        line.jitter = 0.0f;
+        line.intensity = intensity;
+
+        // Soft white-ish color so it doesn't dominate your neon stuff
+        line.start_r = line.end_r = 0.9f;
+        line.start_g = line.end_g = 0.9f;
+        line.start_b = line.end_b = 0.9f;
+
+        const float h = edge_length * 0.5f; // half-edge
+
+        // 8 corners of the cube
+        struct P { float x, y, z; };
+        P v[8] = {
+            { -h, -h, -h }, // 0
+            {  h, -h, -h }, // 1
+            {  h,  h, -h }, // 2
+            { -h,  h, -h }, // 3
+            { -h, -h,  h }, // 4
+            {  h, -h,  h }, // 5
+            {  h,  h,  h }, // 6
+            { -h,  h,  h }  // 7
+        };
+
+        auto emit_edge = [&](int a, int b)
+            {
+                line.start_x = v[a].x; line.start_y = v[a].y; line.start_z = v[a].z;
+                line.end_x = v[b].x; line.end_y = v[b].y; line.end_z = v[b].z;
+                ctx.add(line);
+            };
+
+        // Bottom square (z = -h)
+        emit_edge(0, 1);
+        emit_edge(1, 2);
+        emit_edge(2, 3);
+        emit_edge(3, 0);
+
+        // Top square (z = +h)
+        emit_edge(4, 5);
+        emit_edge(5, 6);
+        emit_edge(6, 7);
+        emit_edge(7, 4);
+
+        // Vertical edges
+        emit_edge(0, 4);
+        emit_edge(1, 5);
+        emit_edge(2, 6);
+        emit_edge(3, 7);
+    }
+};
+
+
+// -----------------------------------------------------------------------------
 // Universe – "orbiting around the sculpture" example
 //   - Ground grid in XZ
 //   - Circular ring system around the origin
@@ -263,6 +329,7 @@ struct Universe
     Ground_grid     ground_grid;
     Circular_system circular_system;
     Axis            axis;
+    Unit_box unit_box;
 
     // later you can add params here (e.g. ring radius, grid size, color modes)
 
@@ -283,6 +350,8 @@ struct Universe
 
         // XYZ gizmo to show orientation
         axis.draw(ctx);
+
+        unit_box.draw(ctx);
     }
 };
 
