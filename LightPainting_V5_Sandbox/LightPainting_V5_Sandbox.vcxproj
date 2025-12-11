@@ -158,6 +158,8 @@
     <ClInclude Include="Examples\W_08_12_2025_22_55.h" />
     <ClInclude Include="Examples\W_08_12_2025_23_16.h" />
     <ClInclude Include="Examples\W_08_12_2025_23_31.h" />
+    <ClInclude Include="Examples\W_09_12_2025_00_22.h" />
+    <ClInclude Include="Examples\W_11_12_2025_15_15.h" />
     <ClInclude Include="example_start.h" />
     <ClInclude Include="WireEngine_v5.h" />
     <ClInclude Include="WireUtil.h" />

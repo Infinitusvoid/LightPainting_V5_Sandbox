@@ -35,7 +35,58 @@
     <ClInclude Include="example_start.h">
       <Filter>Source Files\Examples</Filter>
     </ClInclude>
+    <ClInclude Include="Examples\W_08_12_2025_18_31.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Examples\W_08_12_2025_20_40.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Examples\W_08_12_2025_20_46.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Examples\W_08_12_2025_20_51.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Examples\W_08_12_2025_21_03.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Examples\W_08_12_2025_21_10.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Examples\W_08_12_2025_21_15.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Examples\W_08_12_2025_21_40.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Examples\W_08_12_2025_21_45.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Examples\W_08_12_2025_22_06.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Examples\W_08_12_2025_22_30.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Examples\W_08_12_2025_22_55.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Examples\W_08_12_2025_23_16.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Examples\W_08_12_2025_23_31.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Examples\W_09_12_2025_00_22.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="WireUtil.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="Examples\W_08_12_2025_11_51.h">
+      <Filter>Source Files\Examples</Filter>
+    </ClInclude>
+    <ClInclude Include="Examples\W_11_12_2025_15_15.h">
       <Filter>Source Files</Filter>
     </ClInclude>
   </ItemGroup>

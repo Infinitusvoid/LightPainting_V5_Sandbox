@@ -1920,7 +1920,7 @@ int main()
     std::cout << "Output path: " << g_base_output_filepath
         << "/" << uniqueName << ".mp4\n";
 
-    RenderSettings settings = init_render_settings(uniqueName, 1);
+    RenderSettings settings = init_render_settings(uniqueName, 240 * 100);
 
     Universe universe{};
 
