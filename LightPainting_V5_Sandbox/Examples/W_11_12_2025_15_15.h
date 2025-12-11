@@ -211,52 +211,77 @@ struct Circular_system
     }
 };
 
+// -----------------------------------------------------------------------------
+// Axis gizmo – RGB axes centered at the origin
+// -----------------------------------------------------------------------------
 struct Axis
 {
-    void draw(LineEmitContext& ctx)
+    float length = 100.0f;   // how far axes extend
+    float thickness = 0.1f;    // line thickness
+
+    void draw(LineEmitContext& ctx) const
     {
-        LineParams line;
+        LineParams line{};
+        line.thickness = thickness;
+        line.jitter = 0.0f;
+        line.intensity = 1.0f;
 
-        {
-            line.start_x = 0.0f;
-            line.start_y = 0.0f;
-            line.start_z = 0.0f;
+        // X axis (red)
+        line.start_x = 0.0f;  line.start_y = 0.0f;   line.start_z = 0.0f;
+        line.end_x = length; line.end_y = 0.0f;   line.end_z = 0.0f;
+        line.start_r = line.end_r = 1.0f;
+        line.start_g = line.end_g = 0.0f;
+        line.start_b = line.end_b = 0.0f;
+        ctx.add(line);
 
-            line.end_x = 0.0f;
-            line.end_y = 100.0f;
-            line.end_z = 0.0f;
+        // Y axis (green)
+        line.start_x = 0.0f;   line.start_y = 0.0f;   line.start_z = 0.0f;
+        line.end_x = 0.0f;   line.end_y = length; line.end_z = 0.0f;
+        line.start_r = line.end_r = 0.0f;
+        line.start_g = line.end_g = 1.0f;
+        line.start_b = line.end_b = 0.0f;
+        ctx.add(line);
 
-            line.thickness = 0.01f;
-
-            ctx.add(line);
-        }
-
-        {
-            line.start_x = 0.0f;
-            line.start_y = 0.0f;
-            line.start_z = 0.0f;
-
-            line.end_x = 0.0f;
-            line.end_y = 0.0f;
-            line.end_z = 100.0f;
-
-            line.thickness = 0.01f;
-
-            ctx.add(line);
-        }
+        // Z axis (blue)
+        line.start_x = 0.0f;   line.start_y = 0.0f;   line.start_z = 0.0f;
+        line.end_x = 0.0f;   line.end_y = 0.0f;   line.end_z = length;
+        line.start_r = line.end_r = 0.0f;
+        line.start_g = line.end_g = 0.0f;
+        line.start_b = line.end_b = 1.0f;
+        ctx.add(line);
     }
 };
 
+// -----------------------------------------------------------------------------
+// Universe – "orbiting around the sculpture" example
+//   - Ground grid in XZ
+//   - Circular ring system around the origin
+//   - XYZ axis gizmo
+// -----------------------------------------------------------------------------
 struct Universe
 {
-    Ground_grid groud_grid;
-    Circular_system cirular_system;
-    Axis axis;
+    Ground_grid     ground_grid;
+    Circular_system circular_system;
+    Axis            axis;
 
-    void draw(LineEmitContext& ctx)
+    // later you can add params here (e.g. ring radius, grid size, color modes)
+
+    Universe() = default;
+
+    // Time-aware draw so you *can* animate later if you want,
+    // even if right now it only calls static draws.
+    void draw(LineEmitContext& ctx, int frame, float t)
     {
-        groud_grid.draw(ctx);
-        cirular_system.draw(ctx);
+        (void)frame;
+        (void)t;
+
+        // Ground reference plane
+        ground_grid.draw(ctx);
+
+        // Main circular system around the origin
+        circular_system.draw(ctx);
+
+        // XYZ gizmo to show orientation
         axis.draw(ctx);
     }
 };
@@ -304,15 +329,10 @@ void camera_callback(int frame, float t, CameraParams& cam)
 
 void line_push_callback(int frame, float t, LineEmitContext& ctx)
 {
-    
-    
-    
-
     Universe* universe = static_cast<Universe*>(ctx.user_ptr);
-    universe->draw(ctx);
+    if (!universe) return;
 
-    
-
+    universe->draw(ctx, frame, t);
 }
 
 
