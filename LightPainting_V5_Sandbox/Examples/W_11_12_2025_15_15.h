@@ -13,7 +13,19 @@
 
 using namespace WireEngine;
 
+RenderSettings init_render_settings(const std::string base_name, int seconds = 4)
+{
+    RenderSettings render_settings;
 
+    
+
+    return render_settings;
+}
+
+struct Universe
+{
+
+};
 
 int main()
 {
